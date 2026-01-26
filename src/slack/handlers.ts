@@ -55,7 +55,12 @@ export function setupHandlers(): void {
     const msg = message as { text?: string; user?: string; thread_ts?: string; ts?: string };
 
     if (msg.text && msg.user && messageCallback) {
-      await messageCallback(msg.text, msg.user, msg.thread_ts ?? msg.ts);
+      try {
+        await messageCallback(msg.text, msg.user, msg.thread_ts ?? msg.ts);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.error(`Error in message handler: ${errorMessage}`);
+      }
     }
   });
 
@@ -63,47 +68,54 @@ export function setupHandlers(): void {
   app.command('/tc', async ({ command, ack, respond }) => {
     await ack();
 
-    const args = command.text.trim().split(' ');
+    const text = command.text?.trim() || '';
+    const args = text.split(' ').filter(Boolean);
     const subcommand = args[0]?.toLowerCase() || '';
 
-    // If there's a custom command handler, use it
-    if (commandCallback) {
-      await commandCallback(subcommand, args.slice(1), command.user_id, async (text: string) => {
-        await respond(text);
-      });
-      return;
-    }
+    try {
+      // If there's a custom command handler, use it
+      if (commandCallback) {
+        await commandCallback(subcommand, args.slice(1), command.user_id, async (text: string) => {
+          await respond(text);
+        });
+        return;
+      }
 
-    // Default command handling
-    switch (subcommand) {
-      case 'status':
-        await respond('Fetching status...');
-        // Will be implemented in orchestrator
-        break;
+      // Default command handling
+      switch (subcommand) {
+        case 'status':
+          await respond('Fetching status...');
+          // Will be implemented in orchestrator
+          break;
 
-      case 'pause':
-        await respond(`Pausing project: ${args[1] || '(none specified)'}`);
-        break;
+        case 'pause':
+          await respond(`Pausing project: ${args[1] || '(none specified)'}`);
+          break;
 
-      case 'resume':
-        await respond(`Resuming project: ${args[1] || '(none specified)'}`);
-        break;
+        case 'resume':
+          await respond(`Resuming project: ${args[1] || '(none specified)'}`);
+          break;
 
-      case 'add':
-        const taskDesc = args.slice(1).join(' ');
-        await respond(`Adding task: ${taskDesc || '(no description)'}`);
-        break;
+        case 'add':
+          const taskDesc = args.slice(1).join(' ');
+          await respond(`Adding task: ${taskDesc || '(no description)'}`);
+          break;
 
-      case 'help':
-      default:
-        await respond(
-          'TrafficControl commands:\n' +
-          '• `/tc status` - Current status\n' +
-          '• `/tc pause [project]` - Pause a project\n' +
-          '• `/tc resume [project]` - Resume a project\n' +
-          '• `/tc add [description]` - Add a task\n' +
-          '• `/tc help` - Show this help message'
-        );
+        case 'help':
+        default:
+          await respond(
+            'TrafficControl commands:\n' +
+            '• `/tc status` - Current status\n' +
+            '• `/tc pause [project]` - Pause a project\n' +
+            '• `/tc resume [project]` - Resume a project\n' +
+            '• `/tc add [description]` - Add a task\n' +
+            '• `/tc help` - Show this help message'
+          );
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error(`Error in command handler: ${errorMessage}`);
+      await respond(`An error occurred while processing your command: ${errorMessage}`);
     }
   });
 
@@ -116,7 +128,12 @@ export function setupHandlers(): void {
       console.log(`Reaction ${reaction} from ${user} on message ${item.ts}`);
 
       if (reactionCallback && item.type === 'message') {
-        await reactionCallback(reaction, user, item.ts, item.channel);
+        try {
+          await reactionCallback(reaction, user, item.ts, item.channel);
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          console.error(`Error in reaction handler: ${errorMessage}`);
+        }
       }
     }
   });
@@ -130,13 +147,26 @@ export function setupHandlers(): void {
     const eventTs: string = (event as unknown as { ts: string }).ts;
     const threadContext: string = thread_ts ?? eventTs;
 
-    if (messageCallback) {
-      await messageCallback(text, user, threadContext);
-    } else {
-      await say({
-        text: `Hello <@${user}>! Use \`/tc help\` to see available commands.`,
-        thread_ts: threadContext
-      });
+    try {
+      if (messageCallback) {
+        await messageCallback(text, user, threadContext);
+      } else {
+        await say({
+          text: `Hello <@${user}>! Use \`/tc help\` to see available commands.`,
+          thread_ts: threadContext
+        });
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error(`Error in app_mention handler: ${errorMessage}`);
+      try {
+        await say({
+          text: `An error occurred processing your mention: ${errorMessage}`,
+          thread_ts: threadContext
+        });
+      } catch (sayErr) {
+        console.error(`Failed to send error message: ${sayErr}`);
+      }
     }
   });
 }
