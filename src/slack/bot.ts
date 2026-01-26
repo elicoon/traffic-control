@@ -80,15 +80,21 @@ export interface SlackMessage {
  * Returns the message timestamp if successful.
  */
 export async function sendMessage(message: SlackMessage): Promise<string | undefined> {
-  const bot = createSlackBot();
+  try {
+    const bot = createSlackBot();
 
-  const result = await bot.client.chat.postMessage({
-    channel: message.channel,
-    text: message.text,
-    thread_ts: message.thread_ts
-  });
+    const result = await bot.client.chat.postMessage({
+      channel: message.channel,
+      text: message.text,
+      thread_ts: message.thread_ts
+    });
 
-  return result.ts;
+    return result.ts;
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(`Failed to send Slack message: ${errorMessage}`);
+    throw new Error(`Failed to send Slack message: ${errorMessage}`);
+  }
 }
 
 /**
