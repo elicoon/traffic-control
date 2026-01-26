@@ -1,5 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 
+export type TaskSource = 'user' | 'agent_proposal' | 'decomposition';
+
 export interface Task {
   id: string;
   project_id: string;
@@ -16,8 +18,16 @@ export interface Task {
   actual_sessions_sonnet: number;
   assigned_agent_id: string | null;
   requires_visual_review: boolean;
+  // Task management fields
+  parent_task_id: string | null;
+  tags: string[];
+  acceptance_criteria: string | null;
+  source: TaskSource;
+  blocked_by_task_id: string | null;
+  eta: string | null;  // ISO timestamp (PST). Compare with completed_at for delta.
+  // Timestamps
   started_at: string | null;
-  completed_at: string | null;
+  completed_at: string | null;  // Actual completion. Delta = completed_at - eta
   created_at: string;
   updated_at: string;
 }
@@ -31,6 +41,13 @@ export interface CreateTaskInput {
   estimated_sessions_opus?: number;
   estimated_sessions_sonnet?: number;
   requires_visual_review?: boolean;
+  // Task management fields
+  parent_task_id?: string;
+  tags?: string[];
+  acceptance_criteria?: string;
+  source?: TaskSource;
+  blocked_by_task_id?: string;
+  eta?: string;
 }
 
 export interface UpdateTaskInput {
@@ -41,6 +58,12 @@ export interface UpdateTaskInput {
   estimated_sessions_opus?: number;
   estimated_sessions_sonnet?: number;
   requires_visual_review?: boolean;
+  // Task management fields
+  parent_task_id?: string | null;
+  tags?: string[];
+  acceptance_criteria?: string | null;
+  blocked_by_task_id?: string | null;
+  eta?: string | null;
 }
 
 export interface RecordUsageInput {
@@ -64,7 +87,14 @@ export class TaskRepository {
         complexity_estimate: input.complexity_estimate ?? null,
         estimated_sessions_opus: input.estimated_sessions_opus ?? 0,
         estimated_sessions_sonnet: input.estimated_sessions_sonnet ?? 0,
-        requires_visual_review: input.requires_visual_review ?? false
+        requires_visual_review: input.requires_visual_review ?? false,
+        // Task management fields
+        parent_task_id: input.parent_task_id ?? null,
+        tags: input.tags ?? [],
+        acceptance_criteria: input.acceptance_criteria ?? null,
+        source: input.source ?? 'user',
+        blocked_by_task_id: input.blocked_by_task_id ?? null,
+        eta: input.eta ?? null
       })
       .select()
       .single();
@@ -230,5 +260,107 @@ export class TaskRepository {
       .eq('id', id);
 
     if (error) throw new Error(`Failed to delete task: ${error.message}`);
+  }
+
+  // Task management helper methods
+
+  async getSubtasks(parentTaskId: string): Promise<Task[]> {
+    const { data, error } = await this.client
+      .from('tc_tasks')
+      .select()
+      .eq('parent_task_id', parentTaskId)
+      .order('priority', { ascending: false });
+
+    if (error) throw new Error(`Failed to get subtasks: ${error.message}`);
+    return data as Task[];
+  }
+
+  async getBySource(source: TaskSource): Promise<Task[]> {
+    const { data, error } = await this.client
+      .from('tc_tasks')
+      .select()
+      .eq('source', source)
+      .order('created_at', { ascending: false });
+
+    if (error) throw new Error(`Failed to get tasks by source: ${error.message}`);
+    return data as Task[];
+  }
+
+  async getBlockedTasks(): Promise<Task[]> {
+    const { data, error } = await this.client
+      .from('tc_tasks')
+      .select()
+      .eq('status', 'blocked')
+      .order('priority', { ascending: false });
+
+    if (error) throw new Error(`Failed to get blocked tasks: ${error.message}`);
+    return data as Task[];
+  }
+
+  async getByTag(tag: string): Promise<Task[]> {
+    const { data, error } = await this.client
+      .from('tc_tasks')
+      .select()
+      .contains('tags', [tag])
+      .order('priority', { ascending: false });
+
+    if (error) throw new Error(`Failed to get tasks by tag: ${error.message}`);
+    return data as Task[];
+  }
+
+  async setBlocker(id: string, blockedByTaskId: string): Promise<Task> {
+    const { data, error } = await this.client
+      .from('tc_tasks')
+      .update({
+        status: 'blocked',
+        blocked_by_task_id: blockedByTaskId,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw new Error(`Failed to set blocker: ${error.message}`);
+    return data as Task;
+  }
+
+  async clearBlocker(id: string): Promise<Task> {
+    const { data, error } = await this.client
+      .from('tc_tasks')
+      .update({
+        status: 'queued',
+        blocked_by_task_id: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw new Error(`Failed to clear blocker: ${error.message}`);
+    return data as Task;
+  }
+
+  async setEta(id: string, eta: string): Promise<Task> {
+    const { data, error } = await this.client
+      .from('tc_tasks')
+      .update({
+        eta,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw new Error(`Failed to set ETA: ${error.message}`);
+    return data as Task;
+  }
+
+  /**
+   * Calculate ETA accuracy for completed tasks.
+   * Returns delta in milliseconds (positive = late, negative = early)
+   */
+  getEtaDelta(task: Task): number | null {
+    if (!task.eta || !task.completed_at) return null;
+    return new Date(task.completed_at).getTime() - new Date(task.eta).getTime();
   }
 }

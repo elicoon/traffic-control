@@ -30,8 +30,16 @@ CREATE TABLE tc_tasks (
   actual_sessions_sonnet INTEGER DEFAULT 0,
   assigned_agent_id TEXT,
   requires_visual_review BOOLEAN DEFAULT false,
+  -- Task management fields (added for project tracking)
+  parent_task_id UUID REFERENCES tc_tasks(id) ON DELETE SET NULL,
+  tags JSONB DEFAULT '[]'::jsonb,
+  acceptance_criteria TEXT,
+  source TEXT DEFAULT 'user' CHECK (source IN ('user', 'agent_proposal', 'decomposition')),
+  blocked_by_task_id UUID REFERENCES tc_tasks(id) ON DELETE SET NULL,
+  eta TIMESTAMPTZ,  -- Estimated completion time (PST). Compare with completed_at for delta.
+  -- Timestamps
   started_at TIMESTAMPTZ,
-  completed_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,  -- Actual completion time. Delta = completed_at - eta
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -86,6 +94,26 @@ CREATE POLICY "Service role full access" ON tc_agent_sessions FOR ALL USING (tru
 CREATE POLICY "Service role full access" ON tc_usage_log FOR ALL USING (true);
 CREATE POLICY "Service role full access" ON tc_interventions FOR ALL USING (true);
 
+-- TrafficControl Proposals
+CREATE TABLE tc_proposals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID REFERENCES tc_projects(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT,
+  impact_score TEXT CHECK (impact_score IN ('high', 'medium', 'low')),
+  estimated_sessions_opus INTEGER DEFAULT 0,
+  estimated_sessions_sonnet INTEGER DEFAULT 0,
+  reasoning TEXT,
+  status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'approved', 'rejected')),
+  rejection_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at TIMESTAMPTZ
+);
+
+-- Enable RLS for proposals
+ALTER TABLE tc_proposals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service role full access" ON tc_proposals FOR ALL USING (true);
+
 -- Indexes for common queries
 CREATE INDEX idx_tc_tasks_project_id ON tc_tasks(project_id);
 CREATE INDEX idx_tc_tasks_status ON tc_tasks(status);
@@ -93,3 +121,11 @@ CREATE INDEX idx_tc_agent_sessions_task_id ON tc_agent_sessions(task_id);
 CREATE INDEX idx_tc_agent_sessions_status ON tc_agent_sessions(status);
 CREATE INDEX idx_tc_usage_log_session_id ON tc_usage_log(session_id);
 CREATE INDEX idx_tc_interventions_task_id ON tc_interventions(task_id);
+CREATE INDEX idx_tc_proposals_status ON tc_proposals(status);
+CREATE INDEX idx_tc_proposals_project_id ON tc_proposals(project_id);
+
+-- Task management field indexes
+CREATE INDEX idx_tc_tasks_parent_task_id ON tc_tasks(parent_task_id);
+CREATE INDEX idx_tc_tasks_blocked_by_task_id ON tc_tasks(blocked_by_task_id);
+CREATE INDEX idx_tc_tasks_source ON tc_tasks(source);
+CREATE INDEX idx_tc_tasks_tags ON tc_tasks USING GIN (tags);
