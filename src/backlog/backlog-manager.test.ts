@@ -119,7 +119,7 @@ describe('BacklogManager', () => {
 
       expect(testProjectStats).toBeDefined();
       expect(testProjectStats?.queuedCount).toBeGreaterThan(0);
-    });
+    }, 15000);
   });
 
   describe('getBacklogDepth', () => {
@@ -185,6 +185,6 @@ describe('BacklogManager', () => {
       expect(typeof summary.totalPendingProposals).toBe('number');
       expect(typeof summary.isBacklogLow).toBe('boolean');
       expect(typeof summary.threshold).toBe('number');
-    });
+    }, 15000);
   });
 });

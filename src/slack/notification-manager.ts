@@ -61,6 +61,7 @@ export interface NotificationQueue {
 export interface NotificationStats {
   totalSent: number;
   totalQueued: number;
+  totalFailed: number;
   lastFlushAt: Date | null;
 }
 
@@ -92,6 +93,7 @@ export class NotificationManager {
     this.stats = {
       totalSent: 0,
       totalQueued: 0,
+      totalFailed: 0,
       lastFlushAt: null
     };
 
@@ -185,7 +187,9 @@ export class NotificationManager {
   }
 
   /**
-   * Sends a notification to Slack.
+   * Sends a notification to Slack with error handling.
+   * Failed notifications are logged but don't throw - they are silently dropped
+   * after exhausting retries (the sendFn should handle retries).
    */
   private async sendNotification(notification: PendingNotification): Promise<string | undefined> {
     const formattedMessage = this.formatNotification(notification);
@@ -195,9 +199,18 @@ export class NotificationManager {
       thread_ts: notification.threadTs
     };
 
-    const result = await this.sendFn(message);
-    this.stats.totalSent++;
-    return result;
+    try {
+      const result = await this.sendFn(message);
+      this.stats.totalSent++;
+      return result;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(
+        `Failed to send ${notification.type} notification for task ${notification.taskId}: ${errorMessage}`
+      );
+      this.stats.totalFailed = (this.stats.totalFailed || 0) + 1;
+      return undefined;
+    }
   }
 
   /**
@@ -333,7 +346,9 @@ export class NotificationManager {
       this.notificationQueue.completions.length;
 
     return {
-      ...this.stats,
+      totalSent: this.stats.totalSent,
+      totalFailed: this.stats.totalFailed,
+      lastFlushAt: this.stats.lastFlushAt,
       totalQueued
     };
   }
