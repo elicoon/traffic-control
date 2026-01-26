@@ -3,6 +3,152 @@ import { App, LogLevel } from '@slack/bolt';
 let app: App | null = null;
 
 /**
+ * Configuration for retry behavior.
+ */
+export interface RetryConfig {
+  /** Maximum number of retry attempts */
+  maxRetries: number;
+  /** Initial delay in milliseconds */
+  initialDelayMs: number;
+  /** Maximum delay in milliseconds */
+  maxDelayMs: number;
+  /** Multiplier for exponential backoff */
+  backoffMultiplier: number;
+}
+
+/**
+ * Default retry configuration.
+ */
+export const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 3,
+  initialDelayMs: 1000,
+  maxDelayMs: 10000,
+  backoffMultiplier: 2
+};
+
+/**
+ * Slack error codes that indicate transient failures (should retry).
+ */
+const TRANSIENT_ERROR_CODES = [
+  'rate_limited',
+  'service_unavailable',
+  'request_timeout',
+  'internal_error',
+  'fatal_error'
+];
+
+/**
+ * Slack error codes that indicate permanent failures (should NOT retry).
+ */
+const PERMANENT_ERROR_CODES = [
+  'invalid_auth',
+  'account_inactive',
+  'token_revoked',
+  'no_permission',
+  'missing_scope',
+  'channel_not_found',
+  'not_in_channel',
+  'is_archived',
+  'invalid_arguments'
+];
+
+/**
+ * Determines if an error is transient and should be retried.
+ */
+export function isTransientError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+
+  // Check for network-related errors
+  if (
+    message.includes('econnreset') ||
+    message.includes('econnrefused') ||
+    message.includes('etimedout') ||
+    message.includes('enotfound') ||
+    message.includes('network') ||
+    message.includes('socket hang up') ||
+    message.includes('timeout')
+  ) {
+    return true;
+  }
+
+  // Check for known transient Slack error codes
+  for (const code of TRANSIENT_ERROR_CODES) {
+    if (message.includes(code)) {
+      return true;
+    }
+  }
+
+  // Check for permanent errors - these should NOT be retried
+  for (const code of PERMANENT_ERROR_CODES) {
+    if (message.includes(code)) {
+      return false;
+    }
+  }
+
+  // Default to not retrying unknown errors
+  return false;
+}
+
+/**
+ * Sleeps for the specified number of milliseconds.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Calculates the delay for a given retry attempt using exponential backoff.
+ */
+export function calculateBackoffDelay(
+  attempt: number,
+  config: RetryConfig
+): number {
+  const delay = config.initialDelayMs * Math.pow(config.backoffMultiplier, attempt);
+  return Math.min(delay, config.maxDelayMs);
+}
+
+/**
+ * Executes an async function with retry logic and exponential backoff.
+ * Only retries on transient errors.
+ */
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  config: RetryConfig = DEFAULT_RETRY_CONFIG,
+  onRetry?: (error: Error, attempt: number, delayMs: number) => void
+): Promise<T> {
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      lastError = err;
+
+      // Don't retry if this is a permanent error or we've exhausted retries
+      if (!isTransientError(error) || attempt === config.maxRetries) {
+        throw err;
+      }
+
+      const delayMs = calculateBackoffDelay(attempt, config);
+
+      if (onRetry) {
+        onRetry(err, attempt + 1, delayMs);
+      }
+
+      await sleep(delayMs);
+    }
+  }
+
+  // This should never be reached, but TypeScript needs it
+  throw lastError || new Error('Retry failed');
+}
+
+/**
  * Creates or returns the singleton Slack bot instance.
  * Requires SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, and SLACK_APP_TOKEN environment variables.
  */
@@ -13,8 +159,13 @@ export function createSlackBot(): App {
   const signingSecret = process.env.SLACK_SIGNING_SECRET;
   const appToken = process.env.SLACK_APP_TOKEN;
 
-  if (!token || !signingSecret || !appToken) {
-    throw new Error('Missing Slack credentials');
+  const missingCredentials: string[] = [];
+  if (!token) missingCredentials.push('SLACK_BOT_TOKEN');
+  if (!signingSecret) missingCredentials.push('SLACK_SIGNING_SECRET');
+  if (!appToken) missingCredentials.push('SLACK_APP_TOKEN');
+
+  if (missingCredentials.length > 0) {
+    throw new Error(`Missing Slack credentials: ${missingCredentials.join(', ')}`);
   }
 
   app = new App({
@@ -76,23 +227,45 @@ export interface SlackMessage {
 }
 
 /**
- * Sends a message to a Slack channel.
+ * Sends a message to a Slack channel with automatic retry on transient failures.
  * Returns the message timestamp if successful.
+ *
+ * Retry behavior:
+ * - Retries on transient errors (network issues, rate limits, timeouts)
+ * - Does NOT retry on auth errors, permission errors, or invalid arguments
+ * - Uses exponential backoff: 1s, 2s, 4s (max 10s)
+ * - Maximum 3 retry attempts
  */
-export async function sendMessage(message: SlackMessage): Promise<string | undefined> {
+export async function sendMessage(
+  message: SlackMessage,
+  retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG
+): Promise<string | undefined> {
+  // Get the bot instance first (this can throw credential errors which should not be retried)
+  const bot = createSlackBot();
+
   try {
-    const bot = createSlackBot();
+    const result = await withRetry(
+      async () => {
+        const response = await bot.client.chat.postMessage({
+          channel: message.channel,
+          text: message.text,
+          thread_ts: message.thread_ts
+        });
+        return response.ts;
+      },
+      retryConfig,
+      (error, attempt, delayMs) => {
+        console.warn(
+          `Slack message send attempt ${attempt} failed: ${error.message}. ` +
+          `Retrying in ${delayMs}ms...`
+        );
+      }
+    );
 
-    const result = await bot.client.chat.postMessage({
-      channel: message.channel,
-      text: message.text,
-      thread_ts: message.thread_ts
-    });
-
-    return result.ts;
+    return result;
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error(`Failed to send Slack message: ${errorMessage}`);
+    console.error(`Failed to send Slack message after retries: ${errorMessage}`);
     throw new Error(`Failed to send Slack message: ${errorMessage}`);
   }
 }

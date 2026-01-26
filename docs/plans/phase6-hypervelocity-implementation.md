@@ -64,7 +64,7 @@ Mandates planning documents for complex tasks.
 
 You are executing Phase 6 of TrafficControl - the HYPERVELOCITY Closed-Loop Implementation. Your job is to dispatch 5 parallel subagents to implement the five Phase 6 components, then coordinate their completion.
 
-**Working directory:** `c:\Users\Eli\portfolio-website\trafficControl`
+**Working directory:** `c:\Users\Eli\projects\traffic-control`
 
 **Current State:**
 - Phases 1-5 complete with tests passing
@@ -95,7 +95,7 @@ Once all 5 subagents complete:
 
 1. **Run build and tests:**
    ```bash
-   cd c:/Users/Eli/portfolio-website/trafficControl
+   cd c:/Users/Eli/projects/traffic-control
    npm run build
    npm test
    ```
@@ -1165,7 +1165,7 @@ describe('HYPERVELOCITY Integration', () => {
 subagent_type: general-purpose
 description: Phase 6 Verification Loop
 prompt: |
-  You are implementing the test verification loop for TrafficControl in c:\Users\Eli\portfolio-website\trafficControl.
+  You are implementing the test verification loop for TrafficControl in c:\Users\Eli\projects\traffic-control.
 
   Read docs/plans/phase6-hypervelocity-implementation.md section "Instance 1: Test Verification Loop" for full requirements.
 
@@ -1193,7 +1193,7 @@ prompt: |
 subagent_type: general-purpose
 description: Phase 6 Trace Logging
 prompt: |
-  You are implementing searchable trace logging for TrafficControl in c:\Users\Eli\portfolio-website\trafficControl.
+  You are implementing searchable trace logging for TrafficControl in c:\Users\Eli\projects\traffic-control.
 
   Read docs/plans/phase6-hypervelocity-implementation.md section "Instance 2: Searchable Trace Logging" for full requirements.
 
@@ -1221,7 +1221,7 @@ prompt: |
 subagent_type: general-purpose
 description: Phase 6 Question KB
 prompt: |
-  You are implementing the Question Knowledge Base for TrafficControl in c:\Users\Eli\portfolio-website\trafficControl.
+  You are implementing the Question Knowledge Base for TrafficControl in c:\Users\Eli\projects\traffic-control.
 
   Read docs/plans/phase6-hypervelocity-implementation.md section "Instance 3: Question Knowledge Base" for full requirements.
 
@@ -1249,7 +1249,7 @@ prompt: |
 subagent_type: general-purpose
 description: Phase 6 CLI Enhancement
 prompt: |
-  You are enhancing the TC CLI for TrafficControl in c:\Users\Eli\portfolio-website\trafficControl.
+  You are enhancing the TC CLI for TrafficControl in c:\Users\Eli\projects\traffic-control.
 
   Read docs/plans/phase6-hypervelocity-implementation.md section "Instance 4: TC CLI Enhancement" for full requirements.
 
@@ -1278,7 +1278,7 @@ prompt: |
 subagent_type: general-purpose
 description: Phase 6 Specs Enforcement
 prompt: |
-  You are implementing specs-first workflow enforcement for TrafficControl in c:\Users\Eli\portfolio-website\trafficControl.
+  You are implementing specs-first workflow enforcement for TrafficControl in c:\Users\Eli\projects\traffic-control.
 
   Read docs/plans/phase6-hypervelocity-implementation.md section "Instance 5: Specs-First Enforcement" for full requirements.
 
