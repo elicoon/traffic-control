@@ -200,16 +200,16 @@ export class TaskRepository {
     };
 
     if (usage.tokens_opus !== undefined) {
-      updates.actual_tokens_opus = (current.actual_tokens_opus || 0) + usage.tokens_opus;
+      updates.actual_tokens_opus = (current.actual_tokens_opus ?? 0) + usage.tokens_opus;
     }
     if (usage.tokens_sonnet !== undefined) {
-      updates.actual_tokens_sonnet = (current.actual_tokens_sonnet || 0) + usage.tokens_sonnet;
+      updates.actual_tokens_sonnet = (current.actual_tokens_sonnet ?? 0) + usage.tokens_sonnet;
     }
     if (usage.sessions_opus !== undefined) {
-      updates.actual_sessions_opus = (current.actual_sessions_opus || 0) + usage.sessions_opus;
+      updates.actual_sessions_opus = (current.actual_sessions_opus ?? 0) + usage.sessions_opus;
     }
     if (usage.sessions_sonnet !== undefined) {
-      updates.actual_sessions_sonnet = (current.actual_sessions_sonnet || 0) + usage.sessions_sonnet;
+      updates.actual_sessions_sonnet = (current.actual_sessions_sonnet ?? 0) + usage.sessions_sonnet;
     }
 
     const { data, error } = await this.client
