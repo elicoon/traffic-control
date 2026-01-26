@@ -216,21 +216,21 @@ describe('WorkflowManager', () => {
       const workflow = manager.createWorkflow('bug_fix', baseInput);
 
       expect(workflow.type).toBe('bug_fix');
-      expect(manager.getWorkflow(workflow.id)).toBe(workflow);
+      expect(manager.getWorkflow(workflow.id)).toStrictEqual(workflow);
     });
 
     it('should create feature workflow', () => {
       const workflow = manager.createWorkflow('feature', baseInput);
 
       expect(workflow.type).toBe('feature');
-      expect(manager.getWorkflow(workflow.id)).toBe(workflow);
+      expect(manager.getWorkflow(workflow.id)).toStrictEqual(workflow);
     });
 
     it('should create refactor workflow', () => {
       const workflow = manager.createWorkflow('refactor', baseInput);
 
       expect(workflow.type).toBe('refactor');
-      expect(manager.getWorkflow(workflow.id)).toBe(workflow);
+      expect(manager.getWorkflow(workflow.id)).toStrictEqual(workflow);
     });
 
     it('should throw for unknown workflow type', () => {
@@ -247,7 +247,7 @@ describe('WorkflowManager', () => {
 
     it('should return the workflow by ID', () => {
       const workflow = manager.createWorkflow('bug_fix', baseInput);
-      expect(manager.getWorkflow(workflow.id)).toBe(workflow);
+      expect(manager.getWorkflow(workflow.id)).toStrictEqual(workflow);
     });
   });
 

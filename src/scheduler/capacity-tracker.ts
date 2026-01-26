@@ -1,6 +1,7 @@
 import { AgentManager } from '../agent/manager.js';
+import { ModelType } from './types.js';
 
-export type ModelType = 'opus' | 'sonnet' | 'haiku';
+export { ModelType };
 
 export interface CapacityConfig {
   opusSessionLimit: number;
@@ -161,13 +162,17 @@ export class CapacityTracker {
         current: opusCurrent,
         limit: this.config.opusSessionLimit,
         available: this.config.opusSessionLimit - opusCurrent,
-        utilization: opusCurrent / this.config.opusSessionLimit,
+        utilization: this.config.opusSessionLimit > 0
+          ? opusCurrent / this.config.opusSessionLimit
+          : 0,
       },
       sonnet: {
         current: sonnetCurrent,
         limit: this.config.sonnetSessionLimit,
         available: this.config.sonnetSessionLimit - sonnetCurrent,
-        utilization: sonnetCurrent / this.config.sonnetSessionLimit,
+        utilization: this.config.sonnetSessionLimit > 0
+          ? sonnetCurrent / this.config.sonnetSessionLimit
+          : 0,
       },
     };
   }

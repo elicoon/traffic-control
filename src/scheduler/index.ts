@@ -1,7 +1,8 @@
 // Scheduler module exports
+export { ModelType } from './types.js';
+
 export {
   CapacityTracker,
-  ModelType,
   CapacityConfig,
   CapacityStats,
   ModelCapacityStats,
