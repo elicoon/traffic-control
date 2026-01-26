@@ -4,7 +4,34 @@ Autonomous agent orchestration system for Claude Code.
 
 ## Overview
 
-TrafficControl manages autonomous Claude Code agents, coordinating task assignment, status tracking, and human-in-the-loop communication via Slack.
+TrafficControl manages autonomous Claude Code agents, coordinating task assignment, status tracking, and human-in-the-loop communication via Slack. The system is designed to maximize Claude usage capacity (100% utilization) while minimizing manual intervention.
+
+**Current Status:** Phase 5 complete with 1257 passing tests.
+
+## Features
+
+### Core Orchestration
+- **Multi-agent management** - Spawn and track multiple Claude Code agents
+- **Task queue** - Priority-based task scheduling with dependency management
+- **Capacity tracking** - Monitor Opus and Sonnet session limits
+- **State persistence** - Recover from crashes with state files
+
+### Resilience & Health Monitoring
+- **Database health checks** - Startup validation with exponential backoff retry
+- **Graceful degradation** - Continues operating in degraded mode during DB outages
+- **Automatic recovery** - Detects when services recover and resumes normal operation
+- **Slack retry logic** - Handles transient network failures with exponential backoff
+
+### Slack Integration
+- **Question routing** - Agent questions posted to Slack threads for human response
+- **Thread tracking** - Maintains conversation context across interactions
+- **Notification batching** - Efficient grouped message delivery
+- **Command handling** - Respond to Slack commands
+
+### Learning & Retrospectives
+- **Automatic retrospectives** - Triggered after failures or blocked tasks
+- **Learning storage** - Persist lessons learned across sessions
+- **Calibration tracking** - Improve estimation accuracy over time
 
 ## Setup
 
@@ -36,27 +63,40 @@ TrafficControl manages autonomous Claude Code agents, coordinating task assignme
 # Run with hot reload
 npm run dev
 
-# Run tests
+# Run tests (1257 tests)
 npm run test
 
 # Run specific test file
-npm run test -- src/integration.test.ts
+npm run test -- src/orchestrator/main-loop.test.ts
+
+# Run tests in watch mode
+npm run test:watch
 
 # Compile TypeScript
 npm run build
+
+# Run CLI
+npm run cli
 ```
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `ANTHROPIC_API_KEY` | Anthropic API key for Claude |
-| `SLACK_BOT_TOKEN` | Slack bot OAuth token (xoxb-...) |
-| `SLACK_SIGNING_SECRET` | Slack app signing secret |
-| `SLACK_APP_TOKEN` | Slack app-level token (xapp-...) |
-| `SLACK_CHANNEL` | Channel name for notifications (default: trafficcontrol) |
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_KEY` | Supabase service role key |
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `SUPABASE_URL` | Supabase project URL | Yes |
+| `SUPABASE_SERVICE_KEY` | Supabase service role key | Yes |
+| `SLACK_BOT_TOKEN` | Slack bot OAuth token (xoxb-...) | Yes |
+| `SLACK_SIGNING_SECRET` | Slack app signing secret | Yes |
+| `SLACK_APP_TOKEN` | Slack app-level token (xapp-...) | Yes |
+| `SLACK_CHANNEL` | Channel name for notifications | No (default: trafficcontrol) |
+| `SLACK_CHANNEL_ID` | Channel ID for notifications | No |
+| `SLACK_REPORT_CHANNEL` | Channel for reports | No |
+| `ANTHROPIC_API_KEY` | Anthropic API key for Claude | Yes |
+| `OPUS_SESSION_LIMIT` | Max concurrent Opus sessions | No (default: 5) |
+| `SONNET_SESSION_LIMIT` | Max concurrent Sonnet sessions | No (default: 10) |
+| `TC_LEARNINGS_PATH` | Path to learnings directory | No (default: ./learnings) |
+| `TC_RETROSPECTIVES_PATH` | Path to retrospectives | No (default: ./retrospectives) |
+| `TC_AGENTS_PATH` | Path to agents.md | No (default: ./agents.md) |
 
 ## Slack Setup
 
@@ -79,7 +119,7 @@ npm run build
 
 ## Database Setup
 
-TrafficControl uses Supabase (PostgreSQL). Apply the following schema:
+TrafficControl uses Supabase (PostgreSQL). Core tables (all prefixed with `tc_`):
 
 ```sql
 -- Projects table
@@ -101,6 +141,12 @@ CREATE TABLE tc_tasks (
   description TEXT,
   status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'assigned', 'in_progress', 'review', 'complete', 'blocked')),
   priority INTEGER NOT NULL DEFAULT 0,
+  source TEXT,
+  tags JSONB,
+  acceptance_criteria TEXT,
+  parent_task_id UUID REFERENCES tc_tasks(id),
+  blocked_by_task_id UUID REFERENCES tc_tasks(id),
+  eta TIMESTAMPTZ,
   complexity_estimate TEXT,
   estimated_sessions_opus INTEGER NOT NULL DEFAULT 0,
   estimated_sessions_sonnet INTEGER NOT NULL DEFAULT 0,
@@ -116,52 +162,136 @@ CREATE TABLE tc_tasks (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Proposals table
+CREATE TABLE tc_proposals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES tc_projects(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  description TEXT,
+  impact_score TEXT CHECK (impact_score IN ('high', 'medium', 'low')),
+  reasoning TEXT,
+  status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'approved', 'rejected')),
+  estimated_sessions_opus INTEGER,
+  estimated_sessions_sonnet INTEGER,
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Indexes
 CREATE INDEX idx_tc_tasks_project_id ON tc_tasks(project_id);
 CREATE INDEX idx_tc_tasks_status ON tc_tasks(status);
 CREATE INDEX idx_tc_projects_status ON tc_projects(status);
 ```
 
-## Phase 1 Features
-
-- Single agent spawning via Claude Agent SDK
-- Slack question routing (agent asks question -> Slack -> human replies -> agent continues)
-- Manual task assignment via database
-- Basic status tracking (queued -> assigned -> in_progress -> complete)
-- Token and session usage recording
+See the Supabase dashboard for additional tables: `tc_agent_sessions`, `tc_usage_log`, `tc_interventions`, `tc_budgets`, `tc_calibration_factors`, `tc_retrospectives`, `tc_visual_reviews`.
 
 ## Architecture
 
 ```
-trafficControl/
+traffic-control/
 ├── src/
-│   ├── index.ts           # Entry point
-│   ├── orchestrator.ts    # Main coordination logic
+│   ├── index.ts              # Entry point
+│   ├── orchestrator.ts       # Main coordination wrapper
+│   ├── orchestrator/
+│   │   ├── main-loop.ts      # Core orchestration loop
+│   │   ├── state-manager.ts  # State persistence
+│   │   ├── event-dispatcher.ts
+│   │   └── delegation-metrics.ts
 │   ├── db/
-│   │   ├── client.ts      # Supabase client
-│   │   └── repositories/  # Data access layer
-│   │       ├── projects.ts
-│   │       └── tasks.ts
+│   │   ├── client.ts         # Supabase client with health checks
+│   │   └── repositories/     # Data access layer
 │   ├── agent/
-│   │   ├── manager.ts     # Agent lifecycle management
-│   │   └── types.ts       # Agent-related types
-│   └── slack/
-│       ├── bot.ts         # Slack bot initialization
-│       └── handlers.ts    # Message handlers
+│   │   ├── manager.ts        # Agent lifecycle management
+│   │   ├── sdk-adapter.ts    # Claude Agent SDK integration
+│   │   └── subagent-tracker.ts
+│   ├── scheduler/
+│   │   ├── scheduler.ts      # Task scheduling
+│   │   ├── task-queue.ts     # Priority queue
+│   │   └── capacity-tracker.ts
+│   ├── slack/
+│   │   ├── bot.ts            # Slack bot with retry logic
+│   │   ├── router.ts         # Message routing
+│   │   ├── handlers.ts       # Event handlers
+│   │   ├── notification-manager.ts
+│   │   └── thread-tracker.ts
+│   ├── learning/
+│   │   ├── learning-store.ts
+│   │   ├── learning-provider.ts
+│   │   └── retrospective-trigger.ts
+│   ├── reporter/
+│   │   └── metrics-collector.ts
+│   ├── backlog/
+│   │   └── backlog-manager.ts
+│   ├── events/
+│   │   ├── event-bus.ts
+│   │   └── event-types.ts
+│   └── cli/
+│       ├── index.ts
+│       └── config-loader.ts
+├── docs/
+│   ├── backlog/              # Detailed backlog proposals
+│   └── plans/                # Implementation plans
+├── learnings/                # Stored learnings
+├── CLAUDE.md                 # AI assistant instructions
+├── agents.md                 # Agent behavior guidelines
+├── CAPABILITIES.md           # Tools & skills reference
+└── trafficControl.md         # Core philosophy
 ```
 
 ## How It Works
 
 1. **Task Queue**: Tasks are created in the database with status `queued`
-2. **Assignment**: The orchestrator picks up queued tasks and spawns Claude agents
-3. **Execution**: Agents work on tasks, updating status to `in_progress`
-4. **Questions**: When an agent needs human input, it posts to Slack
-5. **Responses**: Humans reply in Slack thread, response is injected back to agent
-6. **Completion**: Agent completes task, status updates to `complete`
+2. **Health Check**: Orchestrator validates database connectivity on startup
+3. **Assignment**: The orchestrator picks up queued tasks and spawns Claude agents
+4. **Execution**: Agents work on tasks, updating status to `in_progress`
+5. **Questions**: When an agent needs human input, it posts to Slack
+6. **Responses**: Humans reply in Slack thread, response is injected back to agent
+7. **Completion**: Agent completes task, status updates to `complete`
+8. **Learning**: On failures, retrospectives are triggered to capture learnings
 
-## Future Phases
+## Resilience Features
 
-- Phase 2: Multi-agent coordination with dependency management
-- Phase 3: Automatic task planning and decomposition
-- Phase 4: Visual review integration
-- Phase 5: Cost optimization and intelligent model selection
+### Database Health Checks
+```typescript
+// Startup validation with retry
+const health = await checkHealth(5000); // 5s timeout
+if (!health.healthy) {
+  await waitForHealthy({ maxRetries: 5, initialDelayMs: 1000 });
+}
+```
+
+### Graceful Degradation
+The orchestrator enters degraded mode after consecutive database failures:
+- Skips normal tick operations
+- Attempts recovery via health checks
+- Emits `database:degraded` and `database:recovered` events
+- Automatically resumes when database is available
+
+### Slack Retry Logic
+```typescript
+// Transient errors are retried with exponential backoff
+// Auth/permission errors fail immediately
+await sendMessage(channel, text, {
+  maxRetries: 3,
+  initialDelayMs: 1000,
+  maxDelayMs: 10000
+});
+```
+
+## Implemented Phases
+
+- **Phase 1**: Single agent spawning, Slack question routing, basic status tracking
+- **Phase 2**: Multi-agent coordination with dependency management
+- **Phase 3**: Automatic task planning and decomposition
+- **Phase 4**: Visual review integration, context optimization
+- **Phase 5**: Resilience improvements, health checks, graceful degradation
+
+## Planned Features
+
+- **CLI Interface**: Interact with TrafficControl from Claude Code terminal
+- **Cost optimization**: Intelligent model selection based on task complexity
+- **Backlog sync**: Single source of truth between Supabase and markdown files
+
+## License
+
+MIT

@@ -4,33 +4,59 @@
 
 TrafficControl is an orchestration system for managing multiple Claude Code agents across concurrent projects. The goal is to maximize Claude usage capacity (100% utilization of session and weekly limits) while minimizing manual intervention.
 
+**Current Status:** Phase 5 complete. Core orchestration, Slack integration, and resilience features implemented.
+
+## Interaction Methods
+
+Currently TrafficControl can be interacted with via:
+- **Slack** - Primary interface for notifications, questions, and commands
+- **Supabase MCP** - Direct database queries from Claude Code sessions
+- **CLI** (planned) - Terminal interface for Claude Code sessions
+
 ## Project Structure
 
 ```
-trafficControl/
+traffic-control/
 ├── src/
-│   ├── agent/           # Agent lifecycle management
+│   ├── agent/           # Agent lifecycle management & SDK adapter
 │   ├── backlog/         # Backlog monitoring & proposal generation
-│   ├── db/repositories/ # Supabase database repositories
-│   ├── orchestrator/    # Main orchestration logic
-│   ├── scheduler/       # Task scheduling & capacity tracking
-│   ├── slack/           # Slack bot integration
-│   └── ...
+│   ├── cli/             # CLI commands and configuration
+│   ├── dashboard/       # Web dashboard (Express server)
+│   ├── db/              # Supabase client & repositories
+│   ├── events/          # Event bus and event types
+│   ├── learning/        # Retrospectives & learning storage
+│   ├── orchestrator/    # Main loop, state manager, delegation
+│   ├── reporter/        # Metrics collection & Slack reports
+│   ├── scheduler/       # Task queue & capacity tracking
+│   └── slack/           # Slack bot, router, notifications
 ├── docs/
 │   ├── backlog/         # Backlog item proposals (markdown)
 │   └── plans/           # Implementation plans
-└── CLAUDE.md            # This file
+├── learnings/           # Project learnings storage
+├── CLAUDE.md            # This file
+├── agents.md            # Agent behavior guidelines
+├── CAPABILITIES.md      # Tools & skills reference
+└── trafficControl.md    # Core philosophy & principles
 ```
 
 ## Database (Supabase)
 
 All data is stored in Supabase. Tables are prefixed with `tc_`:
-- `tc_projects` - Projects being managed
-- `tc_tasks` - Tasks in the backlog
-- `tc_proposals` - Proposed tasks awaiting approval
-- `tc_agent_sessions` - Agent session tracking
-- `tc_usage_log` - Token usage logging
-- `tc_interventions` - Human intervention tracking
+
+| Table | Description |
+|-------|-------------|
+| `tc_projects` | Projects being managed |
+| `tc_tasks` | Tasks in the backlog |
+| `tc_proposals` | Proposed tasks awaiting approval |
+| `tc_agent_sessions` | Agent session tracking |
+| `tc_usage_log` | Token usage logging |
+| `tc_interventions` | Human intervention tracking |
+| `tc_budgets` | Project budget allocations |
+| `tc_calibration_factors` | Estimation calibration data |
+| `tc_estimates_history` | Historical estimate tracking |
+| `tc_model_pricing` | Model pricing configuration |
+| `tc_retrospectives` | Learning retrospectives |
+| `tc_visual_reviews` | Visual review tracking |
 
 ## Key Project IDs
 
@@ -43,7 +69,7 @@ All data is stored in Supabase. Tables are prefixed with `tc_`:
 
 ## Adding Backlog Items
 
-There are **two ways** to add backlog items:
+There are **three ways** to add backlog items:
 
 ### Option 1: Add a Task Directly to the Database (Quick)
 
@@ -141,6 +167,8 @@ For complex features that need detailed planning, create a markdown file in `doc
 
 Then create a corresponding `tc_proposals` entry linking to this doc.
 
+**Important:** The Supabase database is the source of truth for backlog items. Markdown files in `docs/backlog/` are for detailed planning only.
+
 ---
 
 ## Task Schema Reference
@@ -213,16 +241,45 @@ UPDATE tc_tasks SET status = 'in_progress', started_at = now() WHERE id = '<task
 UPDATE tc_tasks SET status = 'complete', completed_at = now() WHERE id = '<task_id>';
 ```
 
+### Check Database Health
+```sql
+SELECT 1 as health_check;  -- Simple connectivity test
+```
+
 ---
 
 ## Development Commands
 
 ```bash
-# Run from trafficControl directory
+# Run from traffic-control directory
 npm run build          # Compile TypeScript
-npm run test           # Run all tests
+npm run start          # Start the orchestrator
+npm run dev            # Development mode with hot reload
+npm run test           # Run all tests (1257 tests)
 npm run test:watch     # Run tests in watch mode
+npm run cli            # Run CLI commands
 ```
+
+## Key Features
+
+### Resilience & Health Monitoring
+- **Database health checks** - Startup validation with exponential backoff
+- **Graceful degradation** - Continues operating in degraded mode during DB outages
+- **Automatic recovery** - Detects when services recover and resumes normal operation
+- **Event-driven monitoring** - Emits `database:healthy`, `database:degraded`, `database:recovered` events
+
+### Slack Integration
+- **Retry with exponential backoff** - Handles transient network failures
+- **Question routing** - Routes agent questions to Slack threads
+- **Thread tracking** - Maintains conversation context
+- **Notification batching** - Efficient message delivery
+
+### Agent Management
+- **Subagent tracking** - Monitors agent hierarchies with depth limits
+- **Session management** - Tracks active sessions and capacity
+- **Project lookup** - Links agents to tasks and projects
+
+---
 
 ## Core Principles (from trafficControl.md)
 
