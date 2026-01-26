@@ -132,8 +132,8 @@ export class MainLoop {
     // Dispatch to event handlers
     await this.eventDispatcher.dispatch(event);
 
-    // Call global handlers
-    for (const handler of this.globalEventHandlers) {
+    // Call global handlers (copy array to prevent modification during iteration)
+    for (const handler of [...this.globalEventHandlers]) {
       try {
         await handler(event);
       } catch (error) {
