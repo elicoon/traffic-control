@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { AgentConfig, AgentSession, AgentEvent, AgentEventHandler } from './types.js';
 
 export class AgentManager {
@@ -45,7 +46,7 @@ export class AgentManager {
   }
 
   async spawnAgent(taskId: string, config: AgentConfig): Promise<string> {
-    const sessionId = crypto.randomUUID();
+    const sessionId = randomUUID();
 
     const session: AgentSession = {
       id: sessionId,
@@ -72,8 +73,8 @@ export class AgentManager {
       throw new Error(`Session ${sessionId} not found`);
     }
 
-    if (session.status !== 'blocked') {
-      throw new Error(`Session ${sessionId} is not blocked`);
+    if (session.status !== 'blocked' && session.status !== 'waiting_approval') {
+      throw new Error(`Session ${sessionId} is not in a state that accepts messages (current: ${session.status})`);
     }
 
     // Update status
