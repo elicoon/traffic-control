@@ -55,7 +55,9 @@ export async function testConnection(): Promise<{ success: boolean; error?: stri
 
     return { success: true };
   } catch (err) {
-    return { success: false, error: String(err) };
+    // Properly handle different error types
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    return { success: false, error: errorMessage };
   }
 }
 
