@@ -2,8 +2,20 @@
 
 **Priority:** Medium
 **Type:** New Feature / Integration
-**Status:** Proposed
+**Status:** Phase 1 Complete - Awaiting API Quota Reset
 **Created:** 2026-01-26
+
+---
+
+## Current Status
+
+**Phase 1 Complete:** MCP server implemented at `gemini-review-mcp/`
+- ✅ `review-code` tool with adversarial prompting
+- ✅ Tiered merge blocking (critical/major/minor)
+- ✅ 32 unit tests passing
+- ⏳ Integration tests blocked by free tier daily quota
+
+**Next:** Test with real API calls once quota resets (midnight Pacific), then proceed to Phase 2
 
 ---
 
