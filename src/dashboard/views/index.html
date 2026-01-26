@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TrafficControl | Agent Orchestration</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            mono: ['JetBrains Mono', 'monospace'],
+            display: ['Space Grotesk', 'sans-serif'],
+          },
+          colors: {
+            surface: {
+              900: '#0a0a0f',
+              800: '#12121a',
+              700: '#1a1a24',
+              600: '#24242f',
+            },
+            accent: {
+              cyan: '#00d4ff',
+              amber: '#ffb800',
+              green: '#00ff88',
+              red: '#ff4757',
+              purple: '#a855f7',
+            },
+            border: {
+              subtle: 'rgba(255,255,255,0.06)',
+              medium: 'rgba(255,255,255,0.12)',
+            }
+          },
+          animation: {
+            'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'glow': 'glow 2s ease-in-out infinite alternate',
+            'slide-up': 'slideUp 0.5s ease-out forwards',
+            'fade-in': 'fadeIn 0.3s ease-out forwards',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.1) transparent;
+    }
+    *::-webkit-scrollbar { width: 6px; height: 6px; }
+    *::-webkit-scrollbar-track { background: transparent; }
+    *::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+    *::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+    @keyframes glow {
+      from { box-shadow: 0 0 5px currentColor, 0 0 10px currentColor; }
+      to { box-shadow: 0 0 10px currentColor, 0 0 20px currentColor; }
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes scanline {
+      0% { transform: translateY(-100%); }
+      100% { transform: translateY(100vh); }
+    }
+
+    .scanline {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(to bottom, transparent, rgba(0,212,255,0.1), transparent);
+      animation: scanline 8s linear infinite;
+      pointer-events: none;
+      z-index: 100;
+    }
+
+    .grid-bg {
+      background-image:
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    .capacity-bar {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .capacity-bar::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+      transform: translateX(-100%);
+      animation: shimmer 2s infinite;
+    }
+
+    @keyframes shimmer {
+      100% { transform: translateX(100%); }
+    }
+
+    .card {
+      animation: slideUp 0.5s ease-out forwards;
+      opacity: 0;
+    }
+
+    .card:nth-child(1) { animation-delay: 0.1s; }
+    .card:nth-child(2) { animation-delay: 0.15s; }
+    .card:nth-child(3) { animation-delay: 0.2s; }
+    .card:nth-child(4) { animation-delay: 0.25s; }
+    .card:nth-child(5) { animation-delay: 0.3s; }
+    .card:nth-child(6) { animation-delay: 0.35s; }
+
+    .status-dot {
+      position: relative;
+    }
+
+    .status-dot::before {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border-radius: 50%;
+      background: inherit;
+      opacity: 0.4;
+      animation: pulse 2s infinite;
+    }
+
+    .hover-lift {
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .hover-lift:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+    }
+
+    .priority-critical { border-left: 3px solid #ff4757; }
+    .priority-warning { border-left: 3px solid #ffb800; }
+    .priority-info { border-left: 3px solid #00d4ff; }
+    .priority-positive { border-left: 3px solid #00ff88; }
+
+    .text-gradient {
+      background: linear-gradient(135deg, #00d4ff, #a855f7);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .btn {
+      transition: all 0.15s ease;
+    }
+
+    .btn:active {
+      transform: scale(0.97);
+    }
+
+    .noise-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1000;
+      opacity: 0.03;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+    }
+  </style>
+</head>
+<body class="bg-surface-900 text-white font-mono min-h-screen grid-bg">
+  <div class="scanline"></div>
+  <div class="noise-overlay"></div>
+
+  <!-- Header -->
+  <header class="sticky top-0 z-50 bg-surface-900/90 backdrop-blur-md border-b border-border-subtle">
+    <div class="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16">
+        <div class="flex items-center gap-4">
+          <div class="flex items-center gap-3">
+            <div class="w-8 h-8 rounded bg-gradient-to-br from-accent-cyan to-accent-purple flex items-center justify-center">
+              <svg class="w-5 h-5 text-surface-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+              </svg>
+            </div>
+            <div>
+              <h1 class="font-display font-semibold text-lg tracking-tight">TrafficControl</h1>
+              <div class="flex items-center gap-2 text-xs text-white/40">
+                <span class="flex items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-accent-green status-dot"></span>
+                  <span id="status-text">OPERATIONAL</span>
+                </span>
+                <span class="text-white/20">|</span>
+                <span id="uptime">00:00:00</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button onclick="refreshDashboard()" class="btn px-3 py-1.5 text-xs bg-surface-700 hover:bg-surface-600 rounded border border-border-subtle flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+            Refresh
+          </button>
+          <div class="text-xs text-white/40 tabular-nums" id="last-updated">
+            Updated: --:--:--
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- System Overview -->
+    <section class="card">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-display font-semibold text-sm uppercase tracking-wider text-white/60 flex items-center gap-2">
+          <svg class="w-4 h-4 text-accent-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+          </svg>
+          System Overview
+        </h2>
+        <span class="text-xs text-white/30 font-mono">LIVE</span>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Capacity Section -->
+        <div class="bg-surface-800 rounded-lg p-5 border border-border-subtle">
+          <h3 class="text-xs uppercase tracking-wider text-white/40 mb-4">Agent Capacity</h3>
+
+          <div class="space-y-4">
+            <!-- Opus Capacity -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-accent-purple"></span>
+                  Opus
+                </span>
+                <span class="text-xs tabular-nums" id="opus-capacity">0 / 5</span>
+              </div>
+              <div class="h-2 bg-surface-600 rounded-full overflow-hidden capacity-bar">
+                <div id="opus-bar" class="h-full bg-gradient-to-r from-accent-purple to-accent-purple/60 rounded-full transition-all duration-500" style="width: 0%"></div>
+              </div>
+            </div>
+
+            <!-- Sonnet Capacity -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-accent-cyan"></span>
+                  Sonnet
+                </span>
+                <span class="text-xs tabular-nums" id="sonnet-capacity">0 / 10</span>
+              </div>
+              <div class="h-2 bg-surface-600 rounded-full overflow-hidden capacity-bar">
+                <div id="sonnet-bar" class="h-full bg-gradient-to-r from-accent-cyan to-accent-cyan/60 rounded-full transition-all duration-500" style="width: 0%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Today's Stats -->
+        <div class="bg-surface-800 rounded-lg p-5 border border-border-subtle">
+          <h3 class="text-xs uppercase tracking-wider text-white/40 mb-4">Today's Activity</h3>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div class="bg-surface-700/50 rounded-lg p-4 border border-border-subtle">
+              <div class="text-2xl font-display font-bold text-accent-green tabular-nums" id="tasks-completed">0</div>
+              <div class="text-xs text-white/40 mt-1">Tasks Completed</div>
+            </div>
+            <div class="bg-surface-700/50 rounded-lg p-4 border border-border-subtle">
+              <div class="text-2xl font-display font-bold text-accent-cyan tabular-nums" id="tokens-used">0</div>
+              <div class="text-xs text-white/40 mt-1">Tokens (K)</div>
+            </div>
+            <div class="bg-surface-700/50 rounded-lg p-4 border border-border-subtle">
+              <div class="text-2xl font-display font-bold text-accent-amber tabular-nums">$<span id="cost-today">0.00</span></div>
+              <div class="text-xs text-white/40 mt-1">Cost USD</div>
+            </div>
+            <div class="bg-surface-700/50 rounded-lg p-4 border border-border-subtle">
+              <div class="text-2xl font-display font-bold tabular-nums" id="interventions">0</div>
+              <div class="text-xs text-white/40 mt-1">Interventions</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Grid -->
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+
+      <!-- Projects Section (2 columns) -->
+      <section class="xl:col-span-2 card" style="animation-delay: 0.2s;">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-display font-semibold text-sm uppercase tracking-wider text-white/60 flex items-center gap-2">
+            <svg class="w-4 h-4 text-accent-amber" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+            </svg>
+            Projects
+          </h2>
+          <span class="text-xs text-white/30" id="project-count">0 active</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="projects-grid">
+          <!-- Project cards will be inserted here -->
+          <div class="bg-surface-800 rounded-lg p-6 border border-border-subtle animate-pulse flex items-center justify-center">
+            <span class="text-white/30 text-sm">Loading projects...</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Recommendations Panel -->
+      <section class="card" style="animation-delay: 0.25s;">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-display font-semibold text-sm uppercase tracking-wider text-white/60 flex items-center gap-2">
+            <svg class="w-4 h-4 text-accent-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+            </svg>
+            Recommendations
+          </h2>
+        </div>
+
+        <div class="space-y-2 max-h-[500px] overflow-y-auto pr-2" id="recommendations-list">
+          <!-- Recommendations will be inserted here -->
+          <div class="bg-surface-800 rounded-lg p-4 border border-border-subtle animate-pulse">
+            <span class="text-white/30 text-sm">Loading recommendations...</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Active Agents & Task Queue -->
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+      <!-- Active Agents -->
+      <section class="card" style="animation-delay: 0.3s;">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-display font-semibold text-sm uppercase tracking-wider text-white/60 flex items-center gap-2">
+            <svg class="w-4 h-4 text-accent-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+            </svg>
+            Active Agents
+          </h2>
+          <span class="text-xs text-white/30" id="agent-count">0 running</span>
+        </div>
+
+        <div class="bg-surface-800 rounded-lg border border-border-subtle overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-border-subtle">
+                  <th class="text-left p-3 text-xs uppercase tracking-wider text-white/40 font-medium">Session</th>
+                  <th class="text-left p-3 text-xs uppercase tracking-wider text-white/40 font-medium">Model</th>
+                  <th class="text-left p-3 text-xs uppercase tracking-wider text-white/40 font-medium">Task</th>
+                  <th class="text-left p-3 text-xs uppercase tracking-wider text-white/40 font-medium">Status</th>
+                  <th class="text-left p-3 text-xs uppercase tracking-wider text-white/40 font-medium">Tokens</th>
+                </tr>
+              </thead>
+              <tbody id="agents-table">
+                <!-- Agent rows will be inserted here -->
+                <tr>
+                  <td colspan="5" class="p-4 text-center text-white/30">No active agents</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Task Queue -->
+      <section class="card" style="animation-delay: 0.35s;">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-display font-semibold text-sm uppercase tracking-wider text-white/60 flex items-center gap-2">
+            <svg class="w-4 h-4 text-accent-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+            </svg>
+            Task Queue
+          </h2>
+          <span class="text-xs text-white/30" id="queue-count">0 queued</span>
+        </div>
+
+        <div class="bg-surface-800 rounded-lg border border-border-subtle overflow-hidden max-h-[400px] overflow-y-auto">
+          <div class="divide-y divide-border-subtle" id="task-queue">
+            <!-- Task items will be inserted here -->
+            <div class="p-4 text-center text-white/30 text-sm">No tasks in queue</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-border-subtle mt-8 py-4">
+    <div class="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between text-xs text-white/30">
+        <span>TrafficControl v1.0.0</span>
+        <span>Phase 4: Optimization</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

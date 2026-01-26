@@ -1,5 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createSlackBot, formatQuestion, formatBlocker, formatVisualReview, formatStatus, resetSlackBot } from './bot.js';
+import {
+  createSlackBot,
+  formatQuestion,
+  formatBlocker,
+  formatVisualReview,
+  formatStatus,
+  resetSlackBot,
+  formatProposal,
+  formatProposalBatch,
+  formatProposalApproved,
+  formatProposalRejected,
+  formatBacklogAlert,
+  formatStatusReport,
+  ProposalData,
+  StatusReportMetrics,
+  RecommendationData
+} from './bot.js';
 
 describe('Slack Bot', () => {
   beforeEach(() => {
@@ -79,5 +95,238 @@ describe('Slack Bot', () => {
     expect(message).toContain('1 blocked');
     expect(message).toContain('5 active');
     expect(message).toContain('0 blocked');
+  });
+
+  describe('Proposal Formatting', () => {
+    const sampleProposal: ProposalData = {
+      id: 'test-id-1',
+      title: 'Add authentication',
+      description: 'Implement JWT-based auth',
+      impact_score: 'high',
+      estimated_sessions_opus: 2,
+      estimated_sessions_sonnet: 3,
+      reasoning: 'Critical for security'
+    };
+
+    it('should format a single proposal', () => {
+      const message = formatProposal(sampleProposal);
+      expect(message).toContain('Add authentication');
+      expect(message).toContain('JWT-based auth');
+      expect(message).toContain('[HIGH]');
+      expect(message).toContain('2 Opus');
+      expect(message).toContain('3 Sonnet');
+      expect(message).toContain('Critical for security');
+    });
+
+    it('should format proposal with index', () => {
+      const message = formatProposal(sampleProposal, 0);
+      expect(message).toContain('*1.*');
+    });
+
+    it('should format proposal with project name', () => {
+      const proposalWithProject: ProposalData = {
+        ...sampleProposal,
+        projectName: 'TestProject'
+      };
+      const message = formatProposal(proposalWithProject);
+      expect(message).toContain('[TestProject]');
+    });
+
+    it('should format medium impact proposals', () => {
+      const mediumProposal: ProposalData = {
+        ...sampleProposal,
+        impact_score: 'medium'
+      };
+      const message = formatProposal(mediumProposal);
+      expect(message).toContain('[MED]');
+    });
+
+    it('should format low impact proposals', () => {
+      const lowProposal: ProposalData = {
+        ...sampleProposal,
+        impact_score: 'low'
+      };
+      const message = formatProposal(lowProposal);
+      expect(message).toContain('[LOW]');
+    });
+
+    it('should handle null impact score', () => {
+      const nullImpactProposal: ProposalData = {
+        ...sampleProposal,
+        impact_score: null
+      };
+      const message = formatProposal(nullImpactProposal);
+      expect(message).toContain('[ ? ]');
+    });
+
+    it('should format a batch of proposals', () => {
+      const proposals: ProposalData[] = [
+        sampleProposal,
+        {
+          id: 'test-id-2',
+          title: 'Add caching',
+          description: 'Redis caching layer',
+          impact_score: 'medium',
+          estimated_sessions_opus: 1,
+          estimated_sessions_sonnet: 1,
+          reasoning: 'Performance improvement'
+        }
+      ];
+
+      const message = formatProposalBatch(proposals);
+      expect(message).toContain('Add authentication');
+      expect(message).toContain('Add caching');
+      expect(message).toContain('*1.*');
+      expect(message).toContain('*2.*');
+      expect(message).toContain('approve all');
+      expect(message).toContain('reject');
+    });
+
+    it('should handle empty proposal batch', () => {
+      const message = formatProposalBatch([]);
+      expect(message).toContain('No proposals');
+    });
+
+    it('should format approval confirmation', () => {
+      const approved: ProposalData[] = [sampleProposal];
+      const message = formatProposalApproved(approved);
+      expect(message).toContain('Approved 1 proposal');
+      expect(message).toContain('Add authentication');
+    });
+
+    it('should format rejection confirmation', () => {
+      const message = formatProposalRejected(sampleProposal, 'Not a priority right now');
+      expect(message).toContain('Rejected');
+      expect(message).toContain('Add authentication');
+      expect(message).toContain('Not a priority right now');
+    });
+
+    it('should format backlog alert', () => {
+      const message = formatBacklogAlert(3, 5, 2);
+      expect(message).toContain('Backlog Running Low');
+      expect(message).toContain('3');
+      expect(message).toContain('5');
+      expect(message).toContain('2');
+    });
+  });
+
+  describe('Status Report Formatting', () => {
+    const sampleMetrics: StatusReportMetrics = {
+      projectMetrics: [
+        {
+          projectId: 'proj-1',
+          projectName: 'Test Project',
+          tasksQueued: 5,
+          tasksInProgress: 2,
+          tasksBlocked: 1,
+          tasksCompletedToday: 3,
+          tasksCompletedThisWeek: 10,
+          tokensOpus: 5000,
+          tokensSonnet: 3000,
+          sessionsCount: 5,
+          completionRate: 40
+        }
+      ],
+      systemMetrics: {
+        totalProjects: 1,
+        totalTasksQueued: 5,
+        totalTasksInProgress: 2,
+        totalTasksBlocked: 1,
+        totalTasksCompletedToday: 3,
+        totalTasksCompletedThisWeek: 10,
+        totalTokensOpus: 5000,
+        totalTokensSonnet: 3000,
+        totalSessions: 5,
+        opusUtilization: 50,
+        sonnetUtilization: 60
+      }
+    };
+
+    const sampleRecommendations: RecommendationData = {
+      projectRecommendations: new Map([
+        ['proj-1', [
+          {
+            type: 'blocked_tasks',
+            message: 'Project "Test Project" has 1 blocked task - needs attention',
+            priority: 'critical' as const,
+            projectId: 'proj-1',
+            projectName: 'Test Project'
+          }
+        ]]
+      ]),
+      systemRecommendations: [
+        {
+          type: 'healthy_system',
+          message: 'System is running smoothly',
+          priority: 'positive' as const
+        }
+      ],
+      actionItems: ['Resolve blocked task in Test Project']
+    };
+
+    it('should format status report with header', () => {
+      const report = formatStatusReport(sampleMetrics, sampleRecommendations);
+      expect(report).toContain('TrafficControl Status Report');
+    });
+
+    it('should include overview section', () => {
+      const report = formatStatusReport(sampleMetrics, sampleRecommendations);
+      expect(report).toContain('Overview');
+      expect(report).toContain('1 active');
+      expect(report).toContain('5 queued');
+      expect(report).toContain('2 in progress');
+      expect(report).toContain('1 blocked');
+    });
+
+    it('should include per-project breakdown', () => {
+      const report = formatStatusReport(sampleMetrics, sampleRecommendations);
+      expect(report).toContain('Per-Project Breakdown');
+      expect(report).toContain('Test Project');
+      expect(report).toContain('40% complete');
+    });
+
+    it('should include recommendations section', () => {
+      const report = formatStatusReport(sampleMetrics, sampleRecommendations);
+      expect(report).toContain('Recommendations');
+      expect(report).toContain('Critical');
+      expect(report).toContain('blocked task');
+    });
+
+    it('should include action items', () => {
+      const report = formatStatusReport(sampleMetrics, sampleRecommendations);
+      expect(report).toContain('Action Items');
+      expect(report).toContain('Resolve blocked task');
+    });
+
+    it('should include footer with command hint', () => {
+      const report = formatStatusReport(sampleMetrics, sampleRecommendations);
+      expect(report).toContain('/tc report');
+    });
+
+    it('should show token usage for projects', () => {
+      const report = formatStatusReport(sampleMetrics, sampleRecommendations);
+      expect(report).toContain('Tokens:');
+      expect(report).toContain('Opus');
+      expect(report).toContain('Sonnet');
+    });
+
+    it('should show utilization percentages', () => {
+      const report = formatStatusReport(sampleMetrics, sampleRecommendations);
+      expect(report).toContain('Utilization');
+      expect(report).toContain('50%');
+      expect(report).toContain('60%');
+    });
+
+    it('should handle empty recommendations gracefully', () => {
+      const emptyRecommendations: RecommendationData = {
+        projectRecommendations: new Map(),
+        systemRecommendations: [],
+        actionItems: []
+      };
+      const report = formatStatusReport(sampleMetrics, emptyRecommendations);
+      expect(report).toContain('TrafficControl Status Report');
+      expect(report).not.toContain('Recommendations');
+      expect(report).not.toContain('Action Items');
+    });
   });
 });
