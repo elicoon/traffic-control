@@ -114,17 +114,24 @@ const createMockDependencies = (): OrchestrationDependencies => ({
   taskRepository: createMockTaskRepository() as any,
 });
 
-const createDefaultConfig = (): Partial<OrchestrationConfig> => ({
+const createDefaultConfig = (): OrchestrationConfig => ({
   pollIntervalMs: 100,
   maxConcurrentAgents: 5,
   gracefulShutdownTimeoutMs: 1000,
   stateFilePath: '/tmp/test-state.json',
   validateDatabaseOnStartup: false, // Disable DB validation in tests
+  dbRetryConfig: {
+    maxRetries: 3,
+    initialDelayMs: 100,
+    maxDelayMs: 1000,
+    backoffMultiplier: 2,
+  },
+  maxConsecutiveDbFailures: 3,
 });
 
 describe('MainLoop', () => {
   let mainLoop: MainLoop;
-  let config: Partial<OrchestrationConfig>;
+  let config: OrchestrationConfig;
   let deps: OrchestrationDependencies;
 
   beforeEach(() => {

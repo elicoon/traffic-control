@@ -104,10 +104,12 @@ npm run cli
 2. Enable Socket Mode in Settings > Socket Mode
 3. Create an App-Level Token with `connections:write` scope
 4. Add Bot Token Scopes under OAuth & Permissions:
-   - `chat:write`
-   - `channels:read`
-   - `channels:history`
-   - `reactions:read`
+   - `chat:write` - Send messages
+   - `channels:read` - List public channels
+   - `channels:history` - Read message history
+   - `channels:manage` - Manage channel settings
+   - `reactions:read` - Read emoji reactions
+   - `users:read` - Read user information
 5. Enable Events under Event Subscriptions and subscribe to:
    - `message.channels`
 6. Install the app to your workspace
