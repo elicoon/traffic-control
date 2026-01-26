@@ -1,5 +1,13 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { createSupabaseClient, testConnection, resetClient } from './client.js';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import {
+  createSupabaseClient,
+  testConnection,
+  resetClient,
+  checkHealth,
+  waitForHealthy,
+  calculateRetryDelay,
+  DEFAULT_RETRY_CONFIG,
+} from './client.js';
 
 describe('Supabase Client', () => {
   beforeEach(() => {
@@ -39,5 +47,190 @@ describe('Supabase Client', () => {
     process.env.SUPABASE_URL = originalUrl;
     process.env.SUPABASE_SERVICE_KEY = originalKey;
     resetClient();
+  });
+});
+
+describe('Health Check', () => {
+  beforeEach(() => {
+    resetClient();
+  });
+
+  describe('checkHealth', () => {
+    it('should return healthy status when database is reachable', async () => {
+      const result = await checkHealth();
+
+      expect(result).toHaveProperty('healthy');
+      expect(result).toHaveProperty('latencyMs');
+      expect(typeof result.latencyMs).toBe('number');
+      expect(result.latencyMs).toBeGreaterThanOrEqual(0);
+
+      // If healthy, no error should be present
+      if (result.healthy) {
+        expect(result.error).toBeUndefined();
+      }
+    });
+
+    it('should measure latency accurately', async () => {
+      const result = await checkHealth();
+
+      // Latency should be reasonable (less than 10 seconds)
+      expect(result.latencyMs).toBeLessThan(10000);
+    });
+
+    it('should handle timeout parameter', async () => {
+      // Very short timeout might fail, but should not hang
+      const startTime = Date.now();
+      const result = await checkHealth(100); // 100ms timeout
+      const elapsed = Date.now() - startTime;
+
+      // Should complete within reasonable time (timeout + overhead)
+      expect(elapsed).toBeLessThan(5000);
+      expect(result).toHaveProperty('healthy');
+    });
+
+    it('should return error details when unhealthy', async () => {
+      // Store original values
+      const originalUrl = process.env.SUPABASE_URL;
+      const originalKey = process.env.SUPABASE_SERVICE_KEY;
+
+      // Set invalid credentials
+      resetClient();
+      process.env.SUPABASE_URL = 'https://invalid.supabase.co';
+      process.env.SUPABASE_SERVICE_KEY = 'invalid-key';
+
+      const result = await checkHealth(2000);
+
+      expect(result.healthy).toBe(false);
+      expect(result.error).toBeDefined();
+      expect(typeof result.error).toBe('string');
+
+      // Restore env vars
+      process.env.SUPABASE_URL = originalUrl;
+      process.env.SUPABASE_SERVICE_KEY = originalKey;
+      resetClient();
+    });
+  });
+
+  describe('calculateRetryDelay', () => {
+    it('should calculate exponential backoff', () => {
+      const config = {
+        maxRetries: 3,
+        initialDelayMs: 1000,
+        maxDelayMs: 30000,
+        backoffMultiplier: 2,
+      };
+
+      // Delays should increase exponentially (with some jitter)
+      const delay0 = calculateRetryDelay(0, config);
+      const delay1 = calculateRetryDelay(1, config);
+      const delay2 = calculateRetryDelay(2, config);
+
+      // Base delays without jitter would be: 1000, 2000, 4000
+      // With up to 25% jitter, ranges are: [1000, 1250], [2000, 2500], [4000, 5000]
+      expect(delay0).toBeGreaterThanOrEqual(1000);
+      expect(delay0).toBeLessThanOrEqual(1250);
+
+      expect(delay1).toBeGreaterThanOrEqual(2000);
+      expect(delay1).toBeLessThanOrEqual(2500);
+
+      expect(delay2).toBeGreaterThanOrEqual(4000);
+      expect(delay2).toBeLessThanOrEqual(5000);
+    });
+
+    it('should cap delay at maxDelayMs', () => {
+      const config = {
+        maxRetries: 10,
+        initialDelayMs: 1000,
+        maxDelayMs: 5000,
+        backoffMultiplier: 3,
+      };
+
+      // After several retries, should be capped at max
+      const delay = calculateRetryDelay(10, config);
+      expect(delay).toBeLessThanOrEqual(5000 * 1.25); // Max + jitter
+    });
+
+    it('should use default config when not provided', () => {
+      const delay = calculateRetryDelay(0);
+      expect(delay).toBeGreaterThanOrEqual(DEFAULT_RETRY_CONFIG.initialDelayMs);
+    });
+  });
+
+  describe('waitForHealthy', () => {
+    it('should return immediately if database is healthy', async () => {
+      const startTime = Date.now();
+      const result = await waitForHealthy({
+        maxRetries: 3,
+        initialDelayMs: 1000,
+        maxDelayMs: 5000,
+        backoffMultiplier: 2,
+      });
+      const elapsed = Date.now() - startTime;
+
+      if (result.healthy) {
+        // Should return quickly if healthy
+        expect(elapsed).toBeLessThan(5000);
+      }
+
+      expect(result).toHaveProperty('healthy');
+      expect(result).toHaveProperty('latencyMs');
+    });
+
+    it('should call onRetry callback on retry attempts', async () => {
+      const onRetry = vi.fn();
+
+      // Store original values
+      const originalUrl = process.env.SUPABASE_URL;
+      const originalKey = process.env.SUPABASE_SERVICE_KEY;
+
+      // Set invalid credentials to force retries
+      resetClient();
+      process.env.SUPABASE_URL = 'https://invalid.supabase.co';
+      process.env.SUPABASE_SERVICE_KEY = 'invalid-key';
+
+      await waitForHealthy(
+        {
+          maxRetries: 2,
+          initialDelayMs: 50,
+          maxDelayMs: 100,
+          backoffMultiplier: 1.5,
+        },
+        onRetry
+      );
+
+      // Should have called onRetry for each retry attempt
+      expect(onRetry).toHaveBeenCalled();
+
+      // Restore env vars
+      process.env.SUPABASE_URL = originalUrl;
+      process.env.SUPABASE_SERVICE_KEY = originalKey;
+      resetClient();
+    });
+
+    it('should return last failed result after all retries exhausted', async () => {
+      // Store original values
+      const originalUrl = process.env.SUPABASE_URL;
+      const originalKey = process.env.SUPABASE_SERVICE_KEY;
+
+      // Set invalid credentials
+      resetClient();
+      process.env.SUPABASE_URL = 'https://invalid.supabase.co';
+      process.env.SUPABASE_SERVICE_KEY = 'invalid-key';
+
+      const result = await waitForHealthy({
+        maxRetries: 1,
+        initialDelayMs: 10,
+        maxDelayMs: 50,
+        backoffMultiplier: 1,
+      });
+
+      expect(result.healthy).toBe(false);
+      expect(result.error).toBeDefined();
+
+      // Restore env vars
+      process.env.SUPABASE_URL = originalUrl;
+      process.env.SUPABASE_SERVICE_KEY = originalKey;
+      resetClient();
+    });
   });
 });

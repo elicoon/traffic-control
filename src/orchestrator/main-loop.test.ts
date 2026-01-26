@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MainLoop, OrchestrationConfig, OrchestrationDependencies } from './main-loop.js';
 import { StateManager } from './state-manager.js';
 import { EventDispatcher, AgentEvent } from './event-dispatcher.js';
+import { EventBus } from '../events/event-bus.js';
+import * as clientModule from '../db/client.js';
 
 // Create mock classes
 const createMockScheduler = () => ({
@@ -86,6 +88,21 @@ const createMockRetrospectiveTrigger = () => ({
   isTriggerEnabled: vi.fn().mockReturnValue(true),
 });
 
+const createMockTaskRepository = () => ({
+  getById: vi.fn().mockResolvedValue({
+    id: 'task-1',
+    project_id: 'project-123',
+    title: 'Test Task',
+    status: 'in_progress',
+  }),
+  create: vi.fn(),
+  update: vi.fn(),
+  updateStatus: vi.fn(),
+  getQueued: vi.fn(),
+  getByProject: vi.fn(),
+  getByStatus: vi.fn(),
+});
+
 const createMockDependencies = (): OrchestrationDependencies => ({
   scheduler: createMockScheduler() as any,
   agentManager: createMockAgentManager() as any,
@@ -94,18 +111,20 @@ const createMockDependencies = (): OrchestrationDependencies => ({
   capacityTracker: createMockCapacityTracker() as any,
   learningProvider: createMockLearningProvider() as any,
   retrospectiveTrigger: createMockRetrospectiveTrigger() as any,
+  taskRepository: createMockTaskRepository() as any,
 });
 
-const createDefaultConfig = (): OrchestrationConfig => ({
+const createDefaultConfig = (): Partial<OrchestrationConfig> => ({
   pollIntervalMs: 100,
   maxConcurrentAgents: 5,
   gracefulShutdownTimeoutMs: 1000,
   stateFilePath: '/tmp/test-state.json',
+  validateDatabaseOnStartup: false, // Disable DB validation in tests
 });
 
 describe('MainLoop', () => {
   let mainLoop: MainLoop;
-  let config: OrchestrationConfig;
+  let config: Partial<OrchestrationConfig>;
   let deps: OrchestrationDependencies;
 
   beforeEach(() => {
@@ -468,6 +487,148 @@ describe('MainLoop', () => {
 
       expect(deps.capacityTracker.releaseCapacity).toHaveBeenCalledWith('opus', 'session-1');
     });
+
+    it('should look up projectId from task on agent error and call retrospective trigger', async () => {
+      const stateManager = mainLoop.getStateManager();
+      stateManager.addAgent({
+        sessionId: 'session-1',
+        taskId: 'task-1',
+        model: 'opus',
+        status: 'running',
+        startedAt: new Date(),
+      });
+
+      // Mock task repository to return a task with project_id
+      vi.mocked(deps.taskRepository!.getById).mockResolvedValue({
+        id: 'task-1',
+        project_id: 'project-456',
+        title: 'Test Task',
+        status: 'in_progress',
+      } as any);
+
+      await mainLoop.handleAgentEvent({
+        type: 'error',
+        agentId: 'session-1',
+        taskId: 'task-1',
+        payload: { error: 'Something failed' },
+        timestamp: new Date(),
+      });
+
+      // Verify taskRepository was called with the taskId
+      expect(deps.taskRepository!.getById).toHaveBeenCalledWith('task-1');
+
+      // Verify retrospective trigger was called with correct projectId
+      expect(deps.retrospectiveTrigger.checkTrigger).toHaveBeenCalledWith({
+        taskId: 'task-1',
+        projectId: 'project-456',
+        sessionId: 'session-1',
+        isBlocked: false,
+      });
+    });
+
+    it('should handle task lookup failure gracefully on agent error', async () => {
+      const stateManager = mainLoop.getStateManager();
+      stateManager.addAgent({
+        sessionId: 'session-1',
+        taskId: 'task-1',
+        model: 'opus',
+        status: 'running',
+        startedAt: new Date(),
+      });
+
+      // Mock task repository to throw an error
+      vi.mocked(deps.taskRepository!.getById).mockRejectedValue(new Error('DB connection failed'));
+
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await mainLoop.handleAgentEvent({
+        type: 'error',
+        agentId: 'session-1',
+        taskId: 'task-1',
+        payload: { error: 'Something failed' },
+        timestamp: new Date(),
+      });
+
+      // Should log a warning
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to look up task for error event')
+      );
+
+      // Should NOT call retrospective trigger since projectId lookup failed
+      expect(deps.retrospectiveTrigger.checkTrigger).not.toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should handle missing task gracefully on agent error', async () => {
+      const stateManager = mainLoop.getStateManager();
+      stateManager.addAgent({
+        sessionId: 'session-1',
+        taskId: 'task-1',
+        model: 'opus',
+        status: 'running',
+        startedAt: new Date(),
+      });
+
+      // Mock task repository to return null (task not found)
+      vi.mocked(deps.taskRepository!.getById).mockResolvedValue(null);
+
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await mainLoop.handleAgentEvent({
+        type: 'error',
+        agentId: 'session-1',
+        taskId: 'task-1',
+        payload: { error: 'Something failed' },
+        timestamp: new Date(),
+      });
+
+      // Should log a warning about task not found
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Task not found for error event')
+      );
+
+      // Should NOT call retrospective trigger since task wasn't found
+      expect(deps.retrospectiveTrigger.checkTrigger).not.toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should skip retrospective check when taskRepository is not provided', async () => {
+      // Create deps without taskRepository
+      const depsWithoutRepo = createMockDependencies();
+      delete depsWithoutRepo.taskRepository;
+
+      const loopWithoutRepo = new MainLoop(config, depsWithoutRepo);
+      const stateManager = loopWithoutRepo.getStateManager();
+      stateManager.addAgent({
+        sessionId: 'session-1',
+        taskId: 'task-1',
+        model: 'opus',
+        status: 'running',
+        startedAt: new Date(),
+      });
+
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await loopWithoutRepo.handleAgentEvent({
+        type: 'error',
+        agentId: 'session-1',
+        taskId: 'task-1',
+        payload: { error: 'Something failed' },
+        timestamp: new Date(),
+      });
+
+      // Should log a warning about skipping retrospective
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Skipping retrospective check')
+      );
+
+      // Should NOT call retrospective trigger
+      expect(depsWithoutRepo.retrospectiveTrigger.checkTrigger).not.toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
+    });
   });
 
   describe('getStateManager', () => {
@@ -533,6 +694,113 @@ describe('MainLoop', () => {
       // May or may not call scheduleNext - depends on implementation
       // The key is that it should check canSchedule first
       expect(deps.scheduler.canSchedule).toHaveBeenCalled();
+    });
+  });
+
+  describe('degraded mode', () => {
+    it('should initialize with isDegraded as false', () => {
+      expect(mainLoop.isDegraded()).toBe(false);
+    });
+
+    it('should include isDegraded in stats', () => {
+      const stats = mainLoop.getStats();
+      expect(stats).toHaveProperty('isDegraded');
+      expect(stats.isDegraded).toBe(false);
+    });
+
+    it('should include dbHealth in stats', () => {
+      const stats = mainLoop.getStats();
+      expect(stats).toHaveProperty('dbHealth');
+      expect(stats.dbHealth).toHaveProperty('healthy');
+      expect(stats.dbHealth).toHaveProperty('consecutiveFailures');
+    });
+  });
+
+  describe('startup database validation', () => {
+    it('should skip database validation when validateDatabaseOnStartup is false', async () => {
+      const waitForHealthySpy = vi.spyOn(clientModule, 'waitForHealthy');
+
+      const loopNoValidate = new MainLoop(
+        { ...config, validateDatabaseOnStartup: false },
+        deps
+      );
+
+      await loopNoValidate.start();
+
+      expect(waitForHealthySpy).not.toHaveBeenCalled();
+      expect(loopNoValidate.isRunning()).toBe(true);
+
+      await loopNoValidate.stop();
+      waitForHealthySpy.mockRestore();
+    });
+
+    it('should validate database on startup when validateDatabaseOnStartup is true', async () => {
+      const waitForHealthySpy = vi.spyOn(clientModule, 'waitForHealthy').mockResolvedValue({
+        healthy: true,
+        latencyMs: 50,
+      });
+
+      const loopWithValidate = new MainLoop(
+        { ...config, validateDatabaseOnStartup: true },
+        deps
+      );
+
+      await loopWithValidate.start();
+
+      expect(waitForHealthySpy).toHaveBeenCalled();
+      expect(loopWithValidate.isRunning()).toBe(true);
+
+      await loopWithValidate.stop();
+      waitForHealthySpy.mockRestore();
+    });
+
+    it('should throw error on startup if database is unavailable', async () => {
+      const waitForHealthySpy = vi.spyOn(clientModule, 'waitForHealthy').mockResolvedValue({
+        healthy: false,
+        latencyMs: 5000,
+        error: 'Connection refused',
+      });
+
+      const loopWithValidate = new MainLoop(
+        { ...config, validateDatabaseOnStartup: true },
+        deps
+      );
+
+      await expect(loopWithValidate.start()).rejects.toThrow('Database unavailable');
+      expect(loopWithValidate.isRunning()).toBe(false);
+
+      waitForHealthySpy.mockRestore();
+    });
+
+    it('should emit database:healthy event on successful startup validation', async () => {
+      const eventBus = new EventBus({ logErrors: false });
+      const healthyHandler = vi.fn();
+      eventBus.on('database:healthy', healthyHandler);
+
+      const waitForHealthySpy = vi.spyOn(clientModule, 'waitForHealthy').mockResolvedValue({
+        healthy: true,
+        latencyMs: 25,
+      });
+
+      const loopWithBus = new MainLoop(
+        { ...config, validateDatabaseOnStartup: true },
+        deps,
+        eventBus
+      );
+
+      await loopWithBus.start();
+
+      expect(healthyHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'database:healthy',
+          payload: expect.objectContaining({
+            latencyMs: 25,
+          }),
+        })
+      );
+
+      await loopWithBus.stop();
+      waitForHealthySpy.mockRestore();
     });
   });
 });

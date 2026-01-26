@@ -4,7 +4,15 @@ import { ContextBudgetManager } from './orchestrator/index.js';
 
 // Mock dependencies
 vi.mock('./db/client.js', () => ({
-  createSupabaseClient: vi.fn(() => ({}))
+  createSupabaseClient: vi.fn(() => ({})),
+  checkHealth: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 50 }),
+  waitForHealthy: vi.fn().mockResolvedValue({ healthy: true, latencyMs: 50 }),
+  DEFAULT_RETRY_CONFIG: {
+    maxRetries: 3,
+    initialDelayMs: 1000,
+    maxDelayMs: 30000,
+    backoffMultiplier: 2,
+  },
 }));
 
 vi.mock('./slack/bot.js', () => ({
