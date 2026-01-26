@@ -106,9 +106,22 @@ export class DashboardServer {
     this.app.use(express.json());
     this.app.use(express.static(path.join(__dirname, 'public')));
 
-    // CORS for development
+    // CORS configuration - restrictive in production, permissive in development
     this.app.use((_req: Request, res: Response, next: NextFunction) => {
-      res.header('Access-Control-Allow-Origin', '*');
+      const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS?.split(',') || [];
+      const origin = _req.headers.origin;
+
+      if (process.env.NODE_ENV === 'production') {
+        // In production, only allow configured origins
+        if (origin && allowedOrigins.includes(origin)) {
+          res.header('Access-Control-Allow-Origin', origin);
+        }
+        // If no origin header or not in allowlist, don't set CORS header (browser will block)
+      } else {
+        // In development, allow all origins for easier testing
+        res.header('Access-Control-Allow-Origin', '*');
+      }
+
       res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       next();

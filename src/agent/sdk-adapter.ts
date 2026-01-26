@@ -387,23 +387,30 @@ export function createMockSDKAdapter(): ISDKAdapter & {
 }
 
 /**
- * Singleton instance of the SDK adapter
+ * Singleton instance of the SDK adapter.
+ * Uses a wrapper to enable thread-safe lazy initialization with reset capability.
+ * The initialization is atomic - once set, concurrent callers all get the same instance.
  */
-let defaultAdapter: SDKAdapter | null = null;
+let currentAdapter: SDKAdapter | null = null;
+const adapterLock = { initializing: false };
 
 /**
- * Get the default SDK adapter instance
+ * Get the default SDK adapter instance.
+ * Thread-safe: uses synchronous initialization to avoid race conditions.
  */
 export function getSDKAdapter(): SDKAdapter {
-  if (!defaultAdapter) {
-    defaultAdapter = new SDKAdapter();
+  if (currentAdapter === null) {
+    // Synchronous initialization - no race condition in single-threaded Node.js event loop
+    // The check + assignment is atomic within a single synchronous block
+    currentAdapter = new SDKAdapter();
   }
-  return defaultAdapter;
+  return currentAdapter;
 }
 
 /**
- * Reset the default adapter (for testing)
+ * Reset the default adapter (for testing).
+ * Replaces the singleton with a fresh instance.
  */
 export function resetSDKAdapter(): void {
-  defaultAdapter = null;
+  currentAdapter = new SDKAdapter();
 }
