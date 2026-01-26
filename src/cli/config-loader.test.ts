@@ -327,7 +327,7 @@ describe('ConfigLoader', () => {
 
       expect(validated.maxConcurrentAgents).toBe(3);
       expect(validated.pollIntervalMs).toBe(5000);
-      expect(validated.learningsPath).toBe('./trafficControl/learnings');
+      expect(validated.learningsPath).toBe('./learnings');
     });
 
     it('should collect all validation errors', () => {
@@ -353,9 +353,9 @@ describe('ConfigLoader', () => {
       expect(defaults.sonnetSessionLimit).toBe(100);
       expect(defaults.pollIntervalMs).toBe(5000);
       expect(defaults.reportIntervalMs).toBe(43200000);
-      expect(defaults.learningsPath).toBe('./trafficControl/learnings');
-      expect(defaults.retrospectivesPath).toBe('./trafficControl/retrospectives');
-      expect(defaults.agentsPath).toBe('./trafficControl/agents.md');
+      expect(defaults.learningsPath).toBe('./learnings');
+      expect(defaults.retrospectivesPath).toBe('./retrospectives');
+      expect(defaults.agentsPath).toBe('./agents.md');
       expect(defaults.quietHoursStart).toBe(0);
       expect(defaults.quietHoursEnd).toBe(7);
       expect(defaults.batchIntervalMs).toBe(1800000);

@@ -35,7 +35,11 @@ export type EventType =
   // System events
   | 'system:started'
   | 'system:stopped'
-  | 'system:error';
+  | 'system:error'
+  // Database events
+  | 'database:healthy'
+  | 'database:degraded'
+  | 'database:recovered';
 
 /**
  * Set of all valid event types for runtime validation
@@ -58,6 +62,9 @@ const ALL_EVENT_TYPES: Set<string> = new Set([
   'system:started',
   'system:stopped',
   'system:error',
+  'database:healthy',
+  'database:degraded',
+  'database:recovered',
 ]);
 
 /**
@@ -235,6 +242,30 @@ export interface SystemErrorPayload {
   message: string;
 }
 
+/**
+ * Payload for database:healthy event
+ */
+export interface DatabaseHealthyPayload {
+  latencyMs: number;
+}
+
+/**
+ * Payload for database:degraded event
+ */
+export interface DatabaseDegradedPayload {
+  error: string;
+  lastHealthyAt?: Date;
+  retryCount: number;
+}
+
+/**
+ * Payload for database:recovered event
+ */
+export interface DatabaseRecoveredPayload {
+  latencyMs: number;
+  downtimeMs: number;
+}
+
 // ============================================================================
 // Event Payload Mapping
 // ============================================================================
@@ -260,6 +291,9 @@ export interface EventPayloads {
   'system:started': SystemStartedPayload;
   'system:stopped': SystemStoppedPayload;
   'system:error': SystemErrorPayload;
+  'database:healthy': DatabaseHealthyPayload;
+  'database:degraded': DatabaseDegradedPayload;
+  'database:recovered': DatabaseRecoveredPayload;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   createSlackBot,
   formatQuestion,
@@ -14,7 +14,12 @@ import {
   formatStatusReport,
   ProposalData,
   StatusReportMetrics,
-  RecommendationData
+  RecommendationData,
+  isTransientError,
+  calculateBackoffDelay,
+  withRetry,
+  DEFAULT_RETRY_CONFIG,
+  RetryConfig
 } from './bot.js';
 
 describe('Slack Bot', () => {
@@ -55,7 +60,28 @@ describe('Slack Bot', () => {
     delete process.env.SLACK_SIGNING_SECRET;
     delete process.env.SLACK_APP_TOKEN;
 
-    expect(() => createSlackBot()).toThrow('Missing Slack credentials');
+    expect(() => createSlackBot()).toThrow('Missing Slack credentials: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, SLACK_APP_TOKEN');
+
+    // Restore env vars
+    process.env.SLACK_BOT_TOKEN = originalToken;
+    process.env.SLACK_SIGNING_SECRET = originalSecret;
+    process.env.SLACK_APP_TOKEN = originalAppToken;
+    resetSlackBot();
+  });
+
+  it('should specify which credential is missing', () => {
+    // Store original values
+    const originalToken = process.env.SLACK_BOT_TOKEN;
+    const originalSecret = process.env.SLACK_SIGNING_SECRET;
+    const originalAppToken = process.env.SLACK_APP_TOKEN;
+
+    // Reset bot and clear only the token
+    resetSlackBot();
+    delete process.env.SLACK_BOT_TOKEN;
+    process.env.SLACK_SIGNING_SECRET = 'test-secret';
+    process.env.SLACK_APP_TOKEN = 'xapp-test';
+
+    expect(() => createSlackBot()).toThrow('Missing Slack credentials: SLACK_BOT_TOKEN');
 
     // Restore env vars
     process.env.SLACK_BOT_TOKEN = originalToken;
@@ -327,6 +353,205 @@ describe('Slack Bot', () => {
       expect(report).toContain('TrafficControl Status Report');
       expect(report).not.toContain('Recommendations');
       expect(report).not.toContain('Action Items');
+    });
+  });
+
+  describe('Retry Logic', () => {
+    describe('isTransientError', () => {
+      it('should identify network errors as transient', () => {
+        expect(isTransientError(new Error('ECONNRESET'))).toBe(true);
+        expect(isTransientError(new Error('ECONNREFUSED'))).toBe(true);
+        expect(isTransientError(new Error('ETIMEDOUT'))).toBe(true);
+        expect(isTransientError(new Error('ENOTFOUND'))).toBe(true);
+        expect(isTransientError(new Error('socket hang up'))).toBe(true);
+        expect(isTransientError(new Error('network error'))).toBe(true);
+        expect(isTransientError(new Error('Request timeout'))).toBe(true);
+      });
+
+      it('should identify Slack transient errors as transient', () => {
+        expect(isTransientError(new Error('rate_limited'))).toBe(true);
+        expect(isTransientError(new Error('service_unavailable'))).toBe(true);
+        expect(isTransientError(new Error('request_timeout'))).toBe(true);
+        expect(isTransientError(new Error('internal_error'))).toBe(true);
+        expect(isTransientError(new Error('fatal_error'))).toBe(true);
+      });
+
+      it('should NOT identify auth errors as transient', () => {
+        expect(isTransientError(new Error('invalid_auth'))).toBe(false);
+        expect(isTransientError(new Error('account_inactive'))).toBe(false);
+        expect(isTransientError(new Error('token_revoked'))).toBe(false);
+        expect(isTransientError(new Error('no_permission'))).toBe(false);
+        expect(isTransientError(new Error('missing_scope'))).toBe(false);
+      });
+
+      it('should NOT identify channel errors as transient', () => {
+        expect(isTransientError(new Error('channel_not_found'))).toBe(false);
+        expect(isTransientError(new Error('not_in_channel'))).toBe(false);
+        expect(isTransientError(new Error('is_archived'))).toBe(false);
+        expect(isTransientError(new Error('invalid_arguments'))).toBe(false);
+      });
+
+      it('should NOT identify unknown errors as transient', () => {
+        expect(isTransientError(new Error('unknown error'))).toBe(false);
+        expect(isTransientError(new Error('something went wrong'))).toBe(false);
+      });
+
+      it('should handle non-Error values', () => {
+        expect(isTransientError('string error')).toBe(false);
+        expect(isTransientError(null)).toBe(false);
+        expect(isTransientError(undefined)).toBe(false);
+        expect(isTransientError(42)).toBe(false);
+      });
+    });
+
+    describe('calculateBackoffDelay', () => {
+      const config: RetryConfig = {
+        maxRetries: 3,
+        initialDelayMs: 1000,
+        maxDelayMs: 10000,
+        backoffMultiplier: 2
+      };
+
+      it('should calculate exponential backoff', () => {
+        expect(calculateBackoffDelay(0, config)).toBe(1000);  // 1000 * 2^0
+        expect(calculateBackoffDelay(1, config)).toBe(2000);  // 1000 * 2^1
+        expect(calculateBackoffDelay(2, config)).toBe(4000);  // 1000 * 2^2
+        expect(calculateBackoffDelay(3, config)).toBe(8000);  // 1000 * 2^3
+      });
+
+      it('should cap delay at maxDelayMs', () => {
+        expect(calculateBackoffDelay(4, config)).toBe(10000); // Would be 16000, capped at 10000
+        expect(calculateBackoffDelay(10, config)).toBe(10000);
+      });
+
+      it('should use default config values', () => {
+        expect(calculateBackoffDelay(0, DEFAULT_RETRY_CONFIG)).toBe(1000);
+        expect(calculateBackoffDelay(1, DEFAULT_RETRY_CONFIG)).toBe(2000);
+      });
+    });
+
+    describe('withRetry', () => {
+      beforeEach(() => {
+        vi.useFakeTimers();
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('should succeed on first attempt', async () => {
+        const fn = vi.fn().mockResolvedValue('success');
+
+        const result = await withRetry(fn);
+
+        expect(result).toBe('success');
+        expect(fn).toHaveBeenCalledTimes(1);
+      });
+
+      it('should retry on transient error and succeed', async () => {
+        const fn = vi.fn()
+          .mockRejectedValueOnce(new Error('ECONNRESET'))
+          .mockResolvedValue('success');
+
+        const resultPromise = withRetry(fn);
+
+        // Let the first call fail
+        await vi.runAllTimersAsync();
+
+        const result = await resultPromise;
+
+        expect(result).toBe('success');
+        expect(fn).toHaveBeenCalledTimes(2);
+      });
+
+      it('should NOT retry on permanent error', async () => {
+        const fn = vi.fn().mockRejectedValue(new Error('invalid_auth'));
+
+        await expect(withRetry(fn)).rejects.toThrow('invalid_auth');
+        expect(fn).toHaveBeenCalledTimes(1);
+      });
+
+      it('should exhaust retries on persistent transient error', async () => {
+        const fn = vi.fn().mockRejectedValue(new Error('ECONNRESET'));
+        const config: RetryConfig = {
+          maxRetries: 2,
+          initialDelayMs: 100,
+          maxDelayMs: 1000,
+          backoffMultiplier: 2
+        };
+
+        // Start the retry operation
+        let caughtError: Error | null = null;
+        const resultPromise = withRetry(fn, config).catch(err => {
+          caughtError = err;
+        });
+
+        // Run all timers to exhaust retries
+        await vi.runAllTimersAsync();
+
+        // Wait for the promise to complete
+        await resultPromise;
+
+        expect(caughtError).not.toBeNull();
+        expect(caughtError!.message).toBe('ECONNRESET');
+        expect(fn).toHaveBeenCalledTimes(3); // Initial + 2 retries
+      });
+
+      it('should call onRetry callback on each retry', async () => {
+        const fn = vi.fn()
+          .mockRejectedValueOnce(new Error('ECONNRESET'))
+          .mockRejectedValueOnce(new Error('ETIMEDOUT'))
+          .mockResolvedValue('success');
+
+        const onRetry = vi.fn();
+
+        const resultPromise = withRetry(fn, DEFAULT_RETRY_CONFIG, onRetry);
+
+        await vi.runAllTimersAsync();
+
+        await resultPromise;
+
+        expect(onRetry).toHaveBeenCalledTimes(2);
+        expect(onRetry).toHaveBeenCalledWith(
+          expect.objectContaining({ message: 'ECONNRESET' }),
+          1,
+          1000
+        );
+        expect(onRetry).toHaveBeenCalledWith(
+          expect.objectContaining({ message: 'ETIMEDOUT' }),
+          2,
+          2000
+        );
+      });
+
+      it('should respect backoff delays', async () => {
+        const fn = vi.fn()
+          .mockRejectedValueOnce(new Error('ECONNRESET'))
+          .mockRejectedValueOnce(new Error('ECONNRESET'))
+          .mockResolvedValue('success');
+
+        const config: RetryConfig = {
+          maxRetries: 3,
+          initialDelayMs: 100,
+          maxDelayMs: 1000,
+          backoffMultiplier: 2
+        };
+
+        const resultPromise = withRetry(fn, config);
+
+        // First call happens immediately
+        expect(fn).toHaveBeenCalledTimes(1);
+
+        // Advance past first delay (100ms)
+        await vi.advanceTimersByTimeAsync(100);
+        expect(fn).toHaveBeenCalledTimes(2);
+
+        // Advance past second delay (200ms)
+        await vi.advanceTimersByTimeAsync(200);
+        expect(fn).toHaveBeenCalledTimes(3);
+
+        await resultPromise;
+      });
     });
   });
 });

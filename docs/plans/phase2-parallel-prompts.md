@@ -288,5 +288,5 @@ Example:
 [Copy Instance 1 prompt]
 
 Additional context: This is TrafficControl Phase 2. Phase 1 is complete.
-Working directory: c:\Users\Eli\portfolio-website\trafficControl
+Working directory: c:\Users\Eli\projects\traffic-control
 ```

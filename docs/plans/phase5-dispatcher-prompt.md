@@ -8,7 +8,7 @@
 
 You are executing Phase 5 of TrafficControl - the Integration & Orchestrator phase. Your job is to dispatch 4 parallel subagents to implement the four Phase 5 components, then coordinate their completion.
 
-**Working directory:** `c:\Users\Eli\portfolio-website\trafficControl`
+**Working directory:** `c:\Users\Eli\projects\traffic-control`
 
 **Current State:**
 - Phases 1-4 complete with 1540 tests passing
@@ -31,7 +31,7 @@ Use the Task tool to dispatch these 4 subagents **in parallel** (single message 
 subagent_type: general-purpose
 description: Phase 5 Main Loop
 prompt: |
-  You are implementing the main orchestration loop for TrafficControl in c:\Users\Eli\portfolio-website\trafficControl.
+  You are implementing the main orchestration loop for TrafficControl in c:\Users\Eli\projects\traffic-control.
 
   Read docs/plans/phase5-parallel-prompts.md section "Instance 1: Main Orchestration Loop" for full requirements.
 
@@ -65,7 +65,7 @@ prompt: |
 subagent_type: general-purpose
 description: Phase 5 Slack Router
 prompt: |
-  You are implementing the Slack router integration for TrafficControl in c:\Users\Eli\portfolio-website\trafficControl.
+  You are implementing the Slack router integration for TrafficControl in c:\Users\Eli\projects\traffic-control.
 
   Read docs/plans/phase5-parallel-prompts.md section "Instance 2: Slack Router Integration" for full requirements.
 
@@ -97,7 +97,7 @@ prompt: |
 subagent_type: general-purpose
 description: Phase 5 Event Bus
 prompt: |
-  You are implementing the event bus system for TrafficControl in c:\Users\Eli\portfolio-website\trafficControl.
+  You are implementing the event bus system for TrafficControl in c:\Users\Eli\projects\traffic-control.
 
   Read docs/plans/phase5-parallel-prompts.md section "Instance 3: Event Bus & Coordination" for full requirements.
 
@@ -126,7 +126,7 @@ prompt: |
 subagent_type: general-purpose
 description: Phase 5 CLI
 prompt: |
-  You are implementing the CLI and startup system for TrafficControl in c:\Users\Eli\portfolio-website\trafficControl.
+  You are implementing the CLI and startup system for TrafficControl in c:\Users\Eli\projects\traffic-control.
 
   Read docs/plans/phase5-parallel-prompts.md section "Instance 4: CLI & Startup" for full requirements.
 
@@ -168,7 +168,7 @@ Once all 4 subagents complete:
 
 1. **Run build and tests:**
    ```bash
-   cd c:/Users/Eli/portfolio-website/trafficControl
+   cd c:/Users/Eli/projects/traffic-control
    npm run build
    npm test
    ```
