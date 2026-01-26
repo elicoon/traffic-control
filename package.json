@@ -1,0 +1,28 @@
+{
+  "name": "trafficcontrol",
+  "version": "1.0.0",
+  "description": "Autonomous agent orchestration system for Claude Code",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest"
+  },
+  "keywords": ["claude", "agent", "orchestration"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.19",
+    "@slack/bolt": "^4.6.0",
+    "@supabase/supabase-js": "^2.91.1",
+    "dotenv": "^17.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.10",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}
