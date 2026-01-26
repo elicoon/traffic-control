@@ -41,7 +41,7 @@ CREATE TABLE tc_agent_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   task_id UUID REFERENCES tc_tasks(id) ON DELETE SET NULL,
   model TEXT NOT NULL CHECK (model IN ('opus', 'sonnet', 'haiku')),
-  parent_session_id UUID REFERENCES tc_agent_sessions(id),
+  parent_session_id UUID REFERENCES tc_agent_sessions(id) ON DELETE CASCADE,
   status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'blocked', 'waiting_approval', 'complete', 'failed')),
   tokens_used BIGINT DEFAULT 0,
   blocker_reason TEXT,
@@ -92,3 +92,4 @@ CREATE INDEX idx_tc_tasks_status ON tc_tasks(status);
 CREATE INDEX idx_tc_agent_sessions_task_id ON tc_agent_sessions(task_id);
 CREATE INDEX idx_tc_agent_sessions_status ON tc_agent_sessions(status);
 CREATE INDEX idx_tc_usage_log_session_id ON tc_usage_log(session_id);
+CREATE INDEX idx_tc_interventions_task_id ON tc_interventions(task_id);

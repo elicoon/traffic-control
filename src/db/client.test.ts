@@ -22,4 +22,22 @@ describe('Supabase Client', () => {
     const result = await testConnection();
     expect(result.success).toBe(true);
   });
+
+  it('should throw error when environment variables are missing', () => {
+    // Store original values
+    const originalUrl = process.env.SUPABASE_URL;
+    const originalKey = process.env.SUPABASE_SERVICE_KEY;
+
+    // Reset client and clear env vars
+    resetClient();
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_SERVICE_KEY;
+
+    expect(() => createSupabaseClient()).toThrow('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY');
+
+    // Restore env vars
+    process.env.SUPABASE_URL = originalUrl;
+    process.env.SUPABASE_SERVICE_KEY = originalKey;
+    resetClient();
+  });
 });
