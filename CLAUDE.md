@@ -4,7 +4,7 @@
 
 TrafficControl is an orchestration system for managing multiple Claude Code agents across concurrent projects. The goal is to maximize Claude usage capacity (100% utilization of session and weekly limits) while minimizing manual intervention.
 
-**Current Status:** Phase 5 complete. Core orchestration, Slack integration, and resilience features implemented.
+**Current Status:** Phase 5 complete. Core orchestration, Slack integration (connected to `#all-traffic-control`), and resilience features implemented.
 
 ## Interaction Methods
 
@@ -273,6 +273,8 @@ npm run cli            # Run CLI commands
 - **Question routing** - Routes agent questions to Slack threads
 - **Thread tracking** - Maintains conversation context
 - **Notification batching** - Efficient message delivery
+- **Channel**: `#all-traffic-control` (ID: `C0ABXJYCGMN`)
+- **Bot user**: `@trafficcontrol`
 
 ### Agent Management
 - **Subagent tracking** - Monitors agent hierarchies with depth limits

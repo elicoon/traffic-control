@@ -113,6 +113,14 @@ describe('Phase 5 Integration', () => {
       maxConcurrentAgents: 5,
       gracefulShutdownTimeoutMs: 5000,
       stateFilePath: stateFilePath,
+      validateDatabaseOnStartup: false,
+      dbRetryConfig: {
+        maxRetries: 3,
+        initialDelayMs: 100,
+        maxDelayMs: 1000,
+        backoffMultiplier: 2,
+      },
+      maxConsecutiveDbFailures: 3,
     };
 
     mockDeps = {
