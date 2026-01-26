@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ModelType } from '../scheduler/index.js';
 
 /**
  * Delegation Metrics Types and Manager
@@ -34,7 +35,7 @@ export interface DelegationMetrics {
   sessionId: string;
 
   /** Model used for the delegation (opus, sonnet, haiku) */
-  model: 'opus' | 'sonnet' | 'haiku';
+  model: ModelType;
 
   /** Number of context tokens passed to the sub-agent */
   contextTokens: number;
@@ -75,7 +76,7 @@ export interface RecordDelegationInput {
   sessionId: string;
 
   /** Model used for the delegation */
-  model: 'opus' | 'sonnet' | 'haiku';
+  model: ModelType;
 
   /** Number of context tokens passed to the sub-agent */
   contextTokens: number;
@@ -127,7 +128,7 @@ export interface DelegationSummary {
   avgContextTokens: number;
 
   /** Breakdown by model */
-  byModel: Record<'opus' | 'sonnet' | 'haiku', ModelDelegationStats>;
+  byModel: Record<ModelType, ModelDelegationStats>;
 }
 
 /**
@@ -387,9 +388,9 @@ export class DelegationMetricsManager {
   private calculateModelStats(
     delegations: DelegationMetrics[]
   ): Record<'opus' | 'sonnet' | 'haiku', ModelDelegationStats> {
-    const models: Array<'opus' | 'sonnet' | 'haiku'> = ['opus', 'sonnet', 'haiku'];
-    const result: Record<'opus' | 'sonnet' | 'haiku', ModelDelegationStats> = {} as Record<
-      'opus' | 'sonnet' | 'haiku',
+    const models: ModelType[] = ['opus', 'sonnet', 'haiku'];
+    const result: Record<ModelType, ModelDelegationStats> = {} as Record<
+      ModelType,
       ModelDelegationStats
     >;
 

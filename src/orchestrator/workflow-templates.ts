@@ -531,9 +531,14 @@ export class WorkflowManager {
 
   /**
    * Get a workflow by ID
+   * Returns a deep copy to prevent external mutation of internal state.
    */
   getWorkflow(workflowId: string): Workflow | undefined {
-    return this.workflows.get(workflowId);
+    const workflow = this.workflows.get(workflowId);
+    if (!workflow) {
+      return undefined;
+    }
+    return structuredClone(workflow);
   }
 
   /**
