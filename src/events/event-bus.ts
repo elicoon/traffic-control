@@ -204,7 +204,15 @@ export class EventBus {
   // ==========================================================================
 
   /**
-   * Emit an event to all registered handlers
+   * Emit an event to all registered handlers.
+   *
+   * **Important:** This method is fire-and-forget for async handlers.
+   * Async handlers are executed but not awaited - the method returns
+   * immediately after invoking all handlers. Errors in async handlers
+   * are caught and emitted as 'system:error' events.
+   *
+   * For use cases requiring confirmation that all handlers have completed,
+   * use `waitFor()` or implement a response pattern with correlation IDs.
    *
    * @param event - The event to emit
    */

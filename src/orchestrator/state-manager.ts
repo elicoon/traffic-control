@@ -38,12 +38,24 @@ export interface StateManagerConfig {
 }
 
 /**
+ * Serialized version of AgentState for JSON persistence
+ */
+interface SerializedAgentState {
+  sessionId: string;
+  taskId: string;
+  model: 'opus' | 'sonnet' | 'haiku';
+  status: AgentStatus;
+  startedAt: string; // ISO date string
+  blockerReason?: string;
+}
+
+/**
  * Serializable version of OrchestrationState for JSON persistence
  */
 interface SerializedState {
   isRunning: boolean;
   isPaused: boolean;
-  activeAgents: AgentState[];
+  activeAgents: SerializedAgentState[];
   pendingTasks: string[];
   lastCheckpoint: string;
 }
@@ -236,7 +248,10 @@ export class StateManager {
       isPaused: this.state.isPaused,
       activeAgents: Array.from(this.state.activeAgents.values()).map(agent => ({
         ...agent,
-        startedAt: agent.startedAt instanceof Date ? agent.startedAt : new Date(agent.startedAt),
+        // Ensure startedAt is properly converted to ISO string for JSON
+        startedAt: agent.startedAt instanceof Date
+          ? agent.startedAt.toISOString()
+          : String(agent.startedAt),
       })),
       pendingTasks: this.state.pendingTasks,
       lastCheckpoint: this.state.lastCheckpoint.toISOString(),

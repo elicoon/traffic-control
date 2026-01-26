@@ -337,4 +337,20 @@ export class NotificationManager {
       totalQueued
     };
   }
+
+  /**
+   * Destroys the notification manager, cleaning up all resources.
+   * IMPORTANT: Must be called when disposing of the NotificationManager
+   * to prevent memory leaks from the batch timer.
+   */
+  destroy(): void {
+    this.stopBatchTimer();
+    this.notificationQueue = {
+      questions: [],
+      blockers: [],
+      reviews: [],
+      completions: []
+    };
+    this.dndUntil = null;
+  }
 }
