@@ -98,9 +98,9 @@ const DEFAULTS: Partial<TrafficControlConfig> = {
   sonnetSessionLimit: 100,
   pollIntervalMs: 5000,
   reportIntervalMs: 43200000, // 12 hours
-  learningsPath: './trafficControl/learnings',
-  retrospectivesPath: './trafficControl/retrospectives',
-  agentsPath: './trafficControl/agents.md',
+  learningsPath: './learnings',
+  retrospectivesPath: './retrospectives',
+  agentsPath: './agents.md',
   quietHoursStart: 0,
   quietHoursEnd: 7,
   batchIntervalMs: 1800000, // 30 minutes
