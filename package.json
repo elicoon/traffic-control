@@ -4,11 +4,15 @@
   "description": "Autonomous agent orchestration system for Claude Code",
   "main": "dist/index.js",
   "type": "module",
+  "bin": {
+    "trafficcontrol": "./dist/bin/trafficcontrol.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
-    "test": "vitest"
+    "test": "vitest",
+    "cli": "tsx bin/trafficcontrol.ts"
   },
   "keywords": [
     "claude",
