@@ -698,7 +698,7 @@ SUCCESS CRITERIA:
 You are building a RAG system to give local LLMs awareness of the TrafficControl codebase.
 
 CONTEXT:
-- Codebase location: trafficControl/
+- Codebase location: traffic-control/
 - Using LanceDB for vector storage
 - Using nomic-embed-text for embeddings (via Ollama)
 - Goal: Retrieve relevant code snippets for any query
@@ -714,7 +714,7 @@ TASKS:
 8. Add file watcher for automatic re-indexing
 
 SUCCESS CRITERIA:
-- All .ts files in trafficControl/ indexed
+- All .ts files in traffic-control/ indexed
 - Search returns relevant code for test queries
 - Re-indexing works on file changes
 - Query latency <500ms

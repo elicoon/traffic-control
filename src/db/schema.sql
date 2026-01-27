@@ -129,3 +129,69 @@ CREATE INDEX idx_tc_tasks_parent_task_id ON tc_tasks(parent_task_id);
 CREATE INDEX idx_tc_tasks_blocked_by_task_id ON tc_tasks(blocked_by_task_id);
 CREATE INDEX idx_tc_tasks_source ON tc_tasks(source);
 CREATE INDEX idx_tc_tasks_tags ON tc_tasks USING GIN (tags);
+
+-- TrafficControl Backlog Items (Single Source of Truth)
+CREATE TABLE tc_backlog_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID REFERENCES tc_projects(id) ON DELETE CASCADE,
+
+  -- Core fields
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+
+  -- Classification
+  type TEXT NOT NULL CHECK (type IN (
+    'feature', 'enhancement', 'architecture',
+    'infrastructure', 'documentation', 'security',
+    'testing', 'maintenance', 'research'
+  )),
+  priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high', 'medium', 'low')),
+  impact_score TEXT CHECK (impact_score IN ('high', 'medium', 'low')),
+
+  -- Estimates
+  complexity_estimate TEXT CHECK (complexity_estimate IN ('small', 'medium', 'large', 'x-large')),
+  estimated_sessions_opus INTEGER DEFAULT 0,
+  estimated_sessions_sonnet INTEGER DEFAULT 0,
+
+  -- Status tracking
+  status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN (
+    'proposed',      -- Initial state
+    'in_review',     -- Being evaluated
+    'accepted',      -- Approved for future work
+    'rejected',      -- Not moving forward
+    'in_progress',   -- Work has started (task created)
+    'implemented',   -- Work complete
+    'archived'       -- Historical record
+  )),
+
+  -- Additional metadata
+  reasoning TEXT,
+  acceptance_criteria TEXT,
+  tags JSONB DEFAULT '[]'::jsonb,
+  related_items JSONB DEFAULT '[]'::jsonb,
+
+  -- Links to work items
+  proposal_ids JSONB DEFAULT '[]'::jsonb,
+  task_ids JSONB DEFAULT '[]'::jsonb,
+
+  -- Source tracking
+  source TEXT DEFAULT 'user' CHECK (source IN ('user', 'agent', 'imported')),
+  source_file TEXT,
+
+  -- Timestamps
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  reviewed_at TIMESTAMPTZ,
+  implemented_at TIMESTAMPTZ
+);
+
+-- Enable RLS for backlog items
+ALTER TABLE tc_backlog_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service role full access" ON tc_backlog_items FOR ALL USING (true);
+
+-- Indexes for backlog items
+CREATE INDEX idx_backlog_items_project_id ON tc_backlog_items(project_id);
+CREATE INDEX idx_backlog_items_status ON tc_backlog_items(status);
+CREATE INDEX idx_backlog_items_priority ON tc_backlog_items(priority);
+CREATE INDEX idx_backlog_items_type ON tc_backlog_items(type);
+CREATE INDEX idx_backlog_items_tags ON tc_backlog_items USING GIN (tags);

@@ -1,5 +1,8 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('StateManager');
 
 /**
  * Status of an active agent in the orchestration system
@@ -119,6 +122,12 @@ export class StateManager {
    */
   addAgent(agentState: AgentState): void {
     this.state.activeAgents.set(agentState.sessionId, { ...agentState });
+    log.info('Agent added to state', {
+      sessionId: agentState.sessionId,
+      taskId: agentState.taskId,
+      model: agentState.model,
+      status: agentState.status,
+    });
   }
 
   /**
@@ -131,23 +140,44 @@ export class StateManager {
       throw new Error(`Agent ${sessionId} not found`);
     }
 
+    const previousStatus = existing.status;
     this.state.activeAgents.set(sessionId, {
       ...existing,
       ...updates,
     });
+
+    // Log state transitions
+    if (updates.status && updates.status !== previousStatus) {
+      log.info('Agent state transition', {
+        sessionId,
+        previousStatus,
+        newStatus: updates.status,
+        taskId: existing.taskId,
+      });
+    }
   }
 
   /**
    * Removes an agent from the active agents map
    */
   removeAgent(sessionId: string): void {
+    const agent = this.state.activeAgents.get(sessionId);
     this.state.activeAgents.delete(sessionId);
+    if (agent) {
+      log.info('Agent removed from state', {
+        sessionId,
+        taskId: agent.taskId,
+        model: agent.model,
+        finalStatus: agent.status,
+      });
+    }
   }
 
   /**
    * Saves the current state to the configured file path
    */
   async saveState(): Promise<void> {
+    log.time('save-state');
     // Update checkpoint timestamp
     this.state.lastCheckpoint = new Date();
 
@@ -164,6 +194,11 @@ export class StateManager {
       JSON.stringify(serialized, null, 2),
       'utf-8'
     );
+    log.timeEnd('save-state', {
+      activeAgents: this.state.activeAgents.size,
+      pendingTasks: this.state.pendingTasks.length,
+    });
+    log.debug('State saved to file', { path: this.config.stateFilePath });
   }
 
   /**
@@ -171,16 +206,27 @@ export class StateManager {
    * @returns true if state was loaded, false if file doesn't exist
    */
   async loadState(): Promise<boolean> {
+    log.time('load-state');
     try {
       const content = await fs.readFile(this.config.stateFilePath, 'utf-8');
       const serialized: SerializedState = JSON.parse(content);
       this.deserializeState(serialized);
+      log.timeEnd('load-state', {
+        activeAgents: this.state.activeAgents.size,
+        pendingTasks: this.state.pendingTasks.length,
+        lastCheckpoint: this.state.lastCheckpoint.toISOString(),
+      });
+      log.info('State loaded from file', { path: this.config.stateFilePath });
       return true;
     } catch (error) {
       const err = error as NodeJS.ErrnoException;
       if (err.code === 'ENOENT') {
+        log.debug('No existing state file found', { path: this.config.stateFilePath });
         return false;
       }
+      log.error('Failed to load state', error instanceof Error ? error : new Error(String(error)), {
+        path: this.config.stateFilePath,
+      });
       throw error;
     }
   }
@@ -224,9 +270,10 @@ export class StateManager {
       try {
         await this.saveState();
       } catch (error) {
-        console.error('Auto-save failed:', error);
+        log.error('Auto-save failed', error instanceof Error ? error : new Error(String(error)));
       }
     }, this.config.autoSaveIntervalMs);
+    log.debug('Auto-save started', { intervalMs: this.config.autoSaveIntervalMs });
   }
 
   /**
@@ -236,6 +283,7 @@ export class StateManager {
     if (this.autoSaveInterval) {
       clearInterval(this.autoSaveInterval);
       this.autoSaveInterval = null;
+      log.debug('Auto-save stopped');
     }
   }
 

@@ -183,7 +183,7 @@ interventions (
 ### Markdown Files (Agent-Readable)
 
 ```
-trafficControl/
+traffic-control/
 ├── learnings/
 │   ├── global.md           # Cross-project patterns
 │   ├── project-a.md        # Project-specific learnings
@@ -384,9 +384,9 @@ applies_to: [technologies/contexts]
 ### Agent Context Loading
 
 Every agent session starts with:
-1. `trafficControl/agents.md` - Core behavior rules
-2. `trafficControl/learnings/global.md` - Cross-project patterns
-3. `trafficControl/learnings/{project}.md` - Project-specific gotchas
+1. `traffic-control/agents.md` - Core behavior rules
+2. `traffic-control/learnings/global.md` - Cross-project patterns
+3. `traffic-control/learnings/{project}.md` - Project-specific gotchas
 4. Project's own `CLAUDE.md`
 
 ---

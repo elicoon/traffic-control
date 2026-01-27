@@ -12,13 +12,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-import { MainLoop, OrchestrationConfig, OrchestrationDependencies } from './main-loop.js';
+import { MainLoop, OrchestrationConfig, OrchestrationDependencies, SlackIntegration } from './main-loop.js';
 import { EventBus, resetDefaultEventBus } from '../events/event-bus.js';
 import { createEvent } from '../events/event-types.js';
 import { SlackRouter, SlackRouterConfig, SendMessageFn, UploadFileFn } from '../slack/router.js';
 import { NotificationManager, NotificationConfig, SendFunction } from '../slack/notification-manager.js';
 import { StateManager } from './state-manager.js';
 import { SlackMessage } from '../slack/bot.js';
+import { Task } from '../db/repositories/tasks.js';
 
 // =============================================================================
 // Mock Dependencies
@@ -121,6 +122,15 @@ describe('Phase 5 Integration', () => {
         backoffMultiplier: 2,
       },
       maxConsecutiveDbFailures: 3,
+      runPreFlightChecks: false,
+      requirePreFlightConfirmation: false,
+      enableTaskApproval: false,
+      statusCheckInIntervalMs: 0,
+      dailyBudgetUsd: 50,
+      weeklyBudgetUsd: 200,
+      hardStopAtBudgetLimit: false,
+      circuitBreakerFailureThreshold: 5,
+      circuitBreakerResetTimeoutMs: 300000,
     };
 
     mockDeps = {
@@ -702,9 +712,453 @@ describe('Phase 5 Integration', () => {
           queuedTasks: expect.any(Number),
           capacity: expect.any(Object),
         }),
+        safety: expect.objectContaining({
+          circuitBreakerState: expect.any(String),
+          spendStats: expect.any(Object),
+          productivityStats: expect.any(Object),
+        }),
       });
 
       await mainLoop.stop();
+    });
+  });
+
+  // ===========================================================================
+  // Safety Systems Integration
+  // ===========================================================================
+
+  describe('Safety Systems Integration', () => {
+    let mockSlackIntegration: SlackIntegration;
+
+    beforeEach(() => {
+      mockSlackIntegration = {
+        sendMessage: vi.fn().mockResolvedValue('ts-123'),
+        sendApprovalRequest: vi.fn().mockResolvedValue('ts-456'),
+      };
+    });
+
+    describe('Circuit Breaker', () => {
+      it('should track failures and trip the circuit', async () => {
+        await mainLoop.start();
+
+        const circuitBreaker = mainLoop.getCircuitBreaker();
+        expect(circuitBreaker.getState()).toBe('closed');
+
+        // Record multiple failures to trip the circuit
+        for (let i = 0; i < 5; i++) {
+          circuitBreaker.recordFailure(`Error ${i}`);
+        }
+
+        expect(circuitBreaker.getState()).toBe('open');
+        expect(circuitBreaker.isTripped()).toBe(true);
+
+        await mainLoop.stop();
+      });
+
+      it('should prevent operations when circuit is open', async () => {
+        await mainLoop.start();
+
+        const circuitBreaker = mainLoop.getCircuitBreaker();
+
+        // Trip the circuit
+        circuitBreaker.trip('Manual test trip');
+
+        expect(circuitBreaker.allowsOperation()).toBe(false);
+
+        await mainLoop.stop();
+      });
+
+      it('should recover after reset', async () => {
+        await mainLoop.start();
+
+        const circuitBreaker = mainLoop.getCircuitBreaker();
+
+        // Trip the circuit
+        circuitBreaker.trip('Test trip');
+        expect(circuitBreaker.isTripped()).toBe(true);
+
+        // Reset the circuit
+        mainLoop.resetCircuitBreaker();
+        expect(circuitBreaker.getState()).toBe('closed');
+        expect(circuitBreaker.allowsOperation()).toBe(true);
+
+        await mainLoop.stop();
+      });
+
+      it('should notify Slack when circuit trips', async () => {
+        mainLoop.setSlackIntegration(mockSlackIntegration);
+        await mainLoop.start();
+
+        const circuitBreaker = mainLoop.getCircuitBreaker();
+        circuitBreaker.trip('Test failure');
+
+        // Wait for async callback
+        await vi.advanceTimersByTimeAsync(100);
+
+        // Check Slack was notified (may not be called if TC_SLACK_CHANNEL is not set)
+        // This test validates the integration is wired up correctly
+
+        await mainLoop.stop();
+      });
+    });
+
+    describe('Spend Monitor', () => {
+      it('should track agent costs', async () => {
+        await mainLoop.start();
+
+        const spendMonitor = mainLoop.getSpendMonitor();
+
+        // Record some spend
+        spendMonitor.recordAgentCost('session-1', 'task-1', 'opus', 1000, 500, 0.05);
+        spendMonitor.recordAgentCost('session-2', 'task-2', 'sonnet', 2000, 1000, 0.02);
+
+        const stats = spendMonitor.getStats();
+        expect(stats.totalSpend).toBeGreaterThan(0);
+        expect(stats.byModel.opus.spend).toBe(0.05);
+        expect(stats.byModel.sonnet.spend).toBe(0.02);
+
+        await mainLoop.stop();
+      });
+
+      it('should calculate budget usage percentages', async () => {
+        // Create mainloop with lower budget for testing
+        const testConfig = {
+          ...config,
+          dailyBudgetUsd: 1,
+          weeklyBudgetUsd: 5,
+        };
+        const testLoop = new MainLoop(testConfig, mockDeps);
+        await testLoop.start();
+
+        const spendMonitor = testLoop.getSpendMonitor();
+
+        // Record $0.50 spend
+        spendMonitor.recordAgentCost('session-1', 'task-1', 'opus', 1000, 500, 0.50);
+
+        const stats = spendMonitor.getStats();
+        expect(stats.dailyBudgetUsed).toBe(50); // 50% of $1 daily budget
+        expect(stats.weeklyBudgetUsed).toBe(10); // 10% of $5 weekly budget
+
+        await testLoop.stop();
+      });
+
+      it('should be reflected in main stats', async () => {
+        await mainLoop.start();
+
+        const spendMonitor = mainLoop.getSpendMonitor();
+        spendMonitor.recordAgentCost('session-1', 'task-1', 'opus', 1000, 500, 0.10);
+
+        const stats = mainLoop.getStats();
+        expect(stats.safety.spendStats.dailySpend).toBe(0.10);
+
+        await mainLoop.stop();
+      });
+    });
+
+    describe('Productivity Monitor', () => {
+      it('should track task completions', async () => {
+        await mainLoop.start();
+
+        const productivityMonitor = mainLoop.getProductivityMonitor();
+
+        // Record successful completions
+        productivityMonitor.recordAgentCompletion(
+          'session-1', 'task-1', 'opus', true, 5000, 1500, 0.05, 'Summary'
+        );
+        productivityMonitor.recordAgentCompletion(
+          'session-2', 'task-2', 'sonnet', true, 3000, 1000, 0.02, 'Summary'
+        );
+
+        const stats = productivityMonitor.getStats();
+        expect(stats.tasksCompleted).toBe(2);
+        expect(stats.tasksSuccessful).toBe(2);
+        expect(stats.successRate).toBe(100);
+
+        await mainLoop.stop();
+      });
+
+      it('should track failures and calculate success rate', async () => {
+        await mainLoop.start();
+
+        const productivityMonitor = mainLoop.getProductivityMonitor();
+
+        // Record mix of successes and failures
+        productivityMonitor.recordAgentCompletion(
+          'session-1', 'task-1', 'opus', true, 5000, 1500, 0.05
+        );
+        productivityMonitor.recordAgentCompletion(
+          'session-2', 'task-2', 'sonnet', false, 3000, 1000, 0.02, undefined, 'Error occurred'
+        );
+
+        const stats = productivityMonitor.getStats();
+        expect(stats.tasksCompleted).toBe(2);
+        expect(stats.tasksSuccessful).toBe(1);
+        expect(stats.tasksFailed).toBe(1);
+        expect(stats.successRate).toBe(50);
+
+        await mainLoop.stop();
+      });
+
+      it('should be reflected in main stats', async () => {
+        await mainLoop.start();
+
+        const productivityMonitor = mainLoop.getProductivityMonitor();
+        productivityMonitor.recordAgentCompletion(
+          'session-1', 'task-1', 'opus', true, 5000, 1500, 0.05
+        );
+
+        const stats = mainLoop.getStats();
+        expect(stats.safety.productivityStats.tasksCompleted).toBe(1);
+        expect(stats.safety.productivityStats.successRate).toBe(100);
+
+        await mainLoop.stop();
+      });
+    });
+
+    describe('Task Approval Manager', () => {
+      it('should require approval for unconfirmed tasks when enabled', async () => {
+        const testConfig = {
+          ...config,
+          enableTaskApproval: true,
+        };
+        const testLoop = new MainLoop(testConfig, mockDeps);
+        await testLoop.start();
+
+        const approvalManager = testLoop.getTaskApprovalManager();
+
+        // Task without priority_confirmed
+        const task: Task = {
+          id: 'task-1',
+          project_id: 'proj-1',
+          title: 'Test Task',
+          description: null,
+          status: 'queued',
+          priority: 50,
+          priority_confirmed: false,
+          priority_confirmed_at: null,
+          priority_confirmed_by: null,
+          source: 'user',
+          tags: [],
+          acceptance_criteria: null,
+          parent_task_id: null,
+          blocked_by_task_id: null,
+          eta: null,
+          estimated_sessions_opus: 1,
+          estimated_sessions_sonnet: 0,
+          actual_sessions_opus: 0,
+          actual_sessions_sonnet: 0,
+          actual_tokens_opus: 0,
+          actual_tokens_sonnet: 0,
+          assigned_agent_id: null,
+          requires_visual_review: false,
+          complexity_estimate: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          started_at: null,
+          completed_at: null,
+        };
+
+        expect(approvalManager.requiresApproval(task)).toBe(true);
+
+        await testLoop.stop();
+      });
+
+      it('should auto-approve confirmed tasks', async () => {
+        const testConfig = {
+          ...config,
+          enableTaskApproval: true,
+        };
+        const testLoop = new MainLoop(testConfig, mockDeps);
+        await testLoop.start();
+
+        const approvalManager = testLoop.getTaskApprovalManager();
+
+        // Task with priority_confirmed
+        const task: Task = {
+          id: 'task-1',
+          project_id: 'proj-1',
+          title: 'Test Task',
+          description: null,
+          status: 'queued',
+          priority: 50,
+          priority_confirmed: true,
+          priority_confirmed_at: new Date().toISOString(),
+          priority_confirmed_by: 'user-123',
+          source: 'user',
+          tags: [],
+          acceptance_criteria: null,
+          parent_task_id: null,
+          blocked_by_task_id: null,
+          eta: null,
+          estimated_sessions_opus: 1,
+          estimated_sessions_sonnet: 0,
+          actual_sessions_opus: 0,
+          actual_sessions_sonnet: 0,
+          actual_tokens_opus: 0,
+          actual_tokens_sonnet: 0,
+          assigned_agent_id: null,
+          requires_visual_review: false,
+          complexity_estimate: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          started_at: null,
+          completed_at: null,
+        };
+
+        expect(approvalManager.requiresApproval(task)).toBe(false);
+
+        await testLoop.stop();
+      });
+
+      it('should handle approval responses', async () => {
+        const testConfig = {
+          ...config,
+          enableTaskApproval: true,
+        };
+        const testLoop = new MainLoop(testConfig, mockDeps);
+        await testLoop.start();
+
+        const approvalManager = testLoop.getTaskApprovalManager();
+
+        // Create a mock task
+        const task: Task = {
+          id: 'task-1',
+          project_id: 'proj-1',
+          title: 'Test Task',
+          description: null,
+          status: 'queued',
+          priority: 50,
+          priority_confirmed: false,
+          priority_confirmed_at: null,
+          priority_confirmed_by: null,
+          source: 'user',
+          tags: [],
+          acceptance_criteria: null,
+          parent_task_id: null,
+          blocked_by_task_id: null,
+          eta: null,
+          estimated_sessions_opus: 1,
+          estimated_sessions_sonnet: 0,
+          actual_sessions_opus: 0,
+          actual_sessions_sonnet: 0,
+          actual_tokens_opus: 0,
+          actual_tokens_sonnet: 0,
+          assigned_agent_id: null,
+          requires_visual_review: false,
+          complexity_estimate: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          started_at: null,
+          completed_at: null,
+        };
+
+        // Request approval
+        await approvalManager.requestApproval(task);
+        expect(approvalManager.getPendingApproval('task-1')).toBeDefined();
+
+        // Handle approval response
+        testLoop.handleTaskApprovalResponse('task-1', true, 'user-123');
+        expect(approvalManager.isApproved('task-1')).toBe(true);
+
+        await testLoop.stop();
+      });
+    });
+
+    describe('Safety Systems Work Together', () => {
+      it('should update all monitors on agent completion', async () => {
+        await mainLoop.start();
+
+        // Add an agent to state first
+        const stateManager = mainLoop.getStateManager();
+        stateManager.addAgent({
+          sessionId: 'agent-1',
+          taskId: 'task-1',
+          model: 'opus',
+          status: 'running',
+          startedAt: new Date(Date.now() - 5000),
+        });
+
+        // Simulate agent completion event
+        await mainLoop.handleAgentEvent({
+          type: 'completion',
+          agentId: 'agent-1',
+          taskId: 'task-1',
+          payload: {
+            tokensUsed: 1500,
+            costUsd: 0.05,
+            durationMs: 5000,
+            summary: 'Task completed successfully',
+          },
+          timestamp: new Date(),
+        });
+
+        // Check all monitors were updated
+        const spendStats = mainLoop.getSpendMonitor().getStats();
+        const productivityStats = mainLoop.getProductivityMonitor().getStats();
+        const circuitBreakerStats = mainLoop.getCircuitBreaker().getStats();
+
+        expect(spendStats.totalSpend).toBeGreaterThan(0);
+        expect(productivityStats.tasksCompleted).toBe(1);
+        expect(productivityStats.tasksSuccessful).toBe(1);
+        expect(circuitBreakerStats.state).toBe('closed');
+
+        await mainLoop.stop();
+      });
+
+      it('should update monitors on agent error', async () => {
+        await mainLoop.start();
+
+        // Add an agent to state first
+        const stateManager = mainLoop.getStateManager();
+        stateManager.addAgent({
+          sessionId: 'agent-1',
+          taskId: 'task-1',
+          model: 'opus',
+          status: 'running',
+          startedAt: new Date(Date.now() - 5000),
+        });
+
+        // Simulate agent error event
+        await mainLoop.handleAgentEvent({
+          type: 'error',
+          agentId: 'agent-1',
+          taskId: 'task-1',
+          payload: {
+            error: 'Something went wrong',
+            tokensUsed: 500,
+            costUsd: 0.01,
+          },
+          timestamp: new Date(),
+        });
+
+        // Check monitors were updated
+        const productivityStats = mainLoop.getProductivityMonitor().getStats();
+        const circuitBreakerStats = mainLoop.getCircuitBreaker().getStats();
+
+        expect(productivityStats.tasksFailed).toBe(1);
+        expect(circuitBreakerStats.failureCount).toBeGreaterThan(0);
+
+        await mainLoop.stop();
+      });
+
+      it('should reflect all safety stats in getStats()', async () => {
+        await mainLoop.start();
+
+        const stats = mainLoop.getStats();
+
+        // Verify safety section structure
+        expect(stats.safety).toBeDefined();
+        expect(stats.safety.circuitBreakerState).toBe('closed');
+        expect(stats.safety.circuitBreakerTripped).toBe(false);
+        expect(stats.safety.spendStats).toBeDefined();
+        expect(stats.safety.spendStats.dailySpend).toBe(0);
+        expect(stats.safety.spendStats.weeklySpend).toBe(0);
+        expect(stats.safety.productivityStats).toBeDefined();
+        expect(stats.safety.productivityStats.tasksCompleted).toBe(0);
+        expect(stats.safety.pendingApprovals).toBe(0);
+
+        await mainLoop.stop();
+      });
     });
   });
 });

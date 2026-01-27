@@ -2,17 +2,20 @@
   "name": "trafficcontrol",
   "version": "1.0.0",
   "description": "Autonomous agent orchestration system for Claude Code",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "type": "module",
   "bin": {
     "trafficcontrol": "./dist/bin/trafficcontrol.js"
   },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node dist/src/index.js",
     "dev": "tsx watch src/index.ts",
     "test": "vitest",
-    "cli": "tsx bin/trafficcontrol.ts"
+    "cli": "tsx bin/trafficcontrol.ts",
+    "cleanup:test-data": "tsx bin/cleanup-test-data.ts",
+    "relay": "tsx src/relay/index.ts",
+    "relay:dev": "tsx watch src/relay/index.ts"
   },
   "keywords": [
     "claude",
@@ -28,13 +31,15 @@
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "js-yaml": "^4.1.1",
-    "playwright": "^1.58.0"
+    "playwright": "^1.58.0",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.0.10",
     "@types/supertest": "^6.0.3",
+    "@types/uuid": "^10.0.0",
     "supertest": "^7.2.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",

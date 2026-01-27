@@ -475,9 +475,9 @@ trafficcontrol config validate <path>
     "reportIntervalMs": 43200000
   },
   "paths": {
-    "learnings": "./trafficControl/learnings",
-    "retrospectives": "./trafficControl/retrospectives",
-    "agents": "./trafficControl/agents.md"
+    "learnings": "./traffic-control/learnings",
+    "retrospectives": "./traffic-control/retrospectives",
+    "agents": "./traffic-control/agents.md"
   },
   "notifications": {
     "quietHoursStart": 0,

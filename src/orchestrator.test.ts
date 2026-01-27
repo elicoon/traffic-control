@@ -74,6 +74,46 @@ vi.mock('./scheduler/index.js', () => ({
   }
 }));
 
+vi.mock('./dashboard/index.js', () => ({
+  DashboardServer: class MockDashboardServer {
+    start = vi.fn().mockResolvedValue(undefined);
+    stop = vi.fn().mockResolvedValue(undefined);
+  }
+}));
+
+vi.mock('./reporter/index.js', () => ({
+  MetricsCollector: class MockMetricsCollector {
+    collectMetrics = vi.fn().mockResolvedValue({});
+  },
+  RecommendationEngine: class MockRecommendationEngine {
+    generateRecommendations = vi.fn().mockReturnValue([]);
+  }
+}));
+
+vi.mock('./orchestrator/index.js', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    createPreFlightChecker: vi.fn(() => ({
+      runChecks: vi.fn().mockResolvedValue({
+        passed: true,
+        queuedTaskCount: 0,
+        tasks: [],
+        warnings: [],
+        costEstimate: null,
+        capacityLimits: { opus: 1, sonnet: 2 },
+        testDataDetected: false,
+        unconfirmedPriorityCount: 0,
+        timestamp: new Date(),
+      }),
+      sendSummaryToSlack: vi.fn().mockResolvedValue('test-thread-ts'),
+      waitForConfirmation: vi.fn().mockResolvedValue(true), // Auto-confirm in tests
+      getConfirmationThreadTs: vi.fn().mockReturnValue('test-thread-ts'),
+      confirm: vi.fn(),
+    })),
+  };
+});
+
 describe('Orchestrator', () => {
   let orchestrator: Orchestrator;
 

@@ -60,7 +60,8 @@ export function parseArgs(args: string[]): ParsedArgs {
     } else if (!result.command) {
       result.command = arg;
       i++;
-    } else if (!result.subcommand && (result.command === 'task' || result.command === 'project' || result.command === 'config')) {
+    } else if (!result.subcommand && (result.command === 'task' || result.command === 'project' || result.command === 'config' ||
+                                       result.command === 'agent' || result.command === 'backlog' || result.command === 'proposal')) {
       result.subcommand = arg;
       i++;
     } else {
@@ -214,6 +215,15 @@ export const CLI = {
       case 'config':
         return CLI.executeConfigCommand(subcommand, args, context);
 
+      case 'agent':
+        return CLI.executeAgentCommand(subcommand, args, context);
+
+      case 'backlog':
+        return CLI.executeBacklogCommand(subcommand, args, context);
+
+      case 'proposal':
+        return CLI.executeProposalCommand(subcommand, args, context);
+
       default:
         throw new Error(`Unknown command: ${command}`);
     }
@@ -243,6 +253,17 @@ export const CLI = {
 
       case 'cancel':
         return Commands.taskCancel(context, args[0] || '');
+
+      case 'update':
+        const taskId = args[0] || '';
+        const updates: any = {};
+
+        if (options.title && typeof options.title === 'string') updates.title = options.title;
+        if (options.description && typeof options.description === 'string') updates.description = options.description;
+        if (options.priority) updates.priority = parseInt(options.priority as string, 10);
+        if (options.tags && typeof options.tags === 'string') updates.tags = options.tags.split(',').map(t => t.trim());
+
+        return Commands.taskUpdate(context, taskId, updates);
 
       default:
         throw new Error(`Unknown task command: ${subcommand}`);
@@ -289,6 +310,87 @@ export const CLI = {
 
       default:
         throw new Error(`Unknown config command: ${subcommand}`);
+    }
+  },
+
+  /**
+   * Execute agent subcommands
+   */
+  async executeAgentCommand(
+    subcommand: string | undefined,
+    args: string[],
+    context: CommandContext
+  ): Promise<CommandResult> {
+    switch (subcommand) {
+      case 'list':
+        return Commands.agentList(context);
+
+      case 'capacity':
+        return Commands.agentCapacity(context);
+
+      default:
+        throw new Error(`Unknown agent command: ${subcommand}`);
+    }
+  },
+
+  /**
+   * Execute backlog subcommands
+   */
+  async executeBacklogCommand(
+    subcommand: string | undefined,
+    args: string[],
+    context: CommandContext
+  ): Promise<CommandResult> {
+    switch (subcommand) {
+      case 'summary':
+        return Commands.backlogSummary(context);
+
+      default:
+        // Default to summary if no subcommand
+        return Commands.backlogSummary(context);
+    }
+  },
+
+  /**
+   * Execute proposal subcommands
+   */
+  async executeProposalCommand(
+    subcommand: string | undefined,
+    args: string[],
+    context: CommandContext
+  ): Promise<CommandResult> {
+    switch (subcommand) {
+      case 'list':
+        return Commands.proposalList(context);
+
+      case 'approve':
+        return Commands.proposalApprove(context, args[0] || '');
+
+      case 'reject':
+        // Parse format: "2: reason" or "2 reason"
+        const fullArg = args.join(' ');
+        const colonIndex = fullArg.indexOf(':');
+        let index: string;
+        let reason: string;
+
+        if (colonIndex > 0) {
+          index = fullArg.substring(0, colonIndex).trim();
+          reason = fullArg.substring(colonIndex + 1).trim();
+        } else {
+          const spaceIndex = fullArg.indexOf(' ');
+          if (spaceIndex > 0) {
+            index = fullArg.substring(0, spaceIndex).trim();
+            reason = fullArg.substring(spaceIndex + 1).trim();
+          } else {
+            throw new Error('Usage: proposal reject <index>: <reason>');
+          }
+        }
+
+        return Commands.proposalReject(context, index, reason);
+
+      default:
+        // Default to list if no subcommand
+        return Commands.proposalList(context);
     }
   },
 

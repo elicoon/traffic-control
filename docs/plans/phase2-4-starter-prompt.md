@@ -28,7 +28,7 @@ Implement actual compression in `compressContext()` method. Currently it only lo
 ```
 Implement context compression in TrafficControl orchestrator.
 
-File: trafficControl/src/orchestrator.ts
+File: traffic-control/src/orchestrator.ts
 
 The `compressContext()` method currently only logs. Implement:
 
@@ -50,7 +50,7 @@ Create workflow templates for common task patterns.
 ```
 Create workflow templates for TrafficControl task delegation.
 
-Create: trafficControl/src/orchestrator/workflow-templates.ts
+Create: traffic-control/src/orchestrator/workflow-templates.ts
 
 Implement workflow patterns:
 
@@ -64,7 +64,7 @@ Each workflow should:
 - Pass minimal context between phases (summaries only)
 - Reference CAPABILITIES.md and agents.md
 
-Create: trafficControl/src/orchestrator/workflow-templates.test.ts
+Create: traffic-control/src/orchestrator/workflow-templates.test.ts
 
 Run tests after: npm test
 ```
@@ -77,7 +77,7 @@ Track delegation success and learn from patterns.
 ```
 Implement delegation metrics tracking for TrafficControl.
 
-Create: trafficControl/src/orchestrator/delegation-metrics.ts
+Create: traffic-control/src/orchestrator/delegation-metrics.ts
 
 Track per-delegation:
 - Context tokens passed to sub-agent
@@ -85,7 +85,7 @@ Track per-delegation:
 - Time to completion
 - Whether sub-agent asked questions
 
-Create: trafficControl/src/orchestrator/delegation-metrics.test.ts
+Create: traffic-control/src/orchestrator/delegation-metrics.test.ts
 
 Integrate with orchestrator.ts - call metrics.recordDelegation() in spawnAgentForTask()
 
@@ -102,10 +102,10 @@ Run tests after: npm test
 
 ## Key Files (reference only, don't read unless needed)
 
-- `trafficControl/src/orchestrator.ts` - Main orchestrator
-- `trafficControl/src/orchestrator/context-budget-manager.ts` - Budget tracking
-- `trafficControl/docs/backlog/context-window-optimization.md` - Full backlog item
-- `trafficControl/docs/plans/phase1-context-optimization.md` - Phase 1 details
+- `traffic-control/src/orchestrator.ts` - Main orchestrator
+- `traffic-control/src/orchestrator/context-budget-manager.ts` - Budget tracking
+- `traffic-control/docs/backlog/context-window-optimization.md` - Full backlog item
+- `traffic-control/docs/plans/phase1-context-optimization.md` - Phase 1 details
 
 ## Success Criteria
 

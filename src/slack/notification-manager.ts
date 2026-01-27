@@ -1,4 +1,7 @@
 import { SlackMessage, formatQuestion, formatBlocker, formatVisualReview } from './bot.js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('Slack.NotificationManager');
 
 /**
  * Type of notification.
@@ -97,6 +100,13 @@ export class NotificationManager {
       lastFlushAt: null
     };
 
+    log.info('NotificationManager initialized', {
+      channelId: config.channelId,
+      batchIntervalMs: config.batchIntervalMs,
+      quietHoursStart: config.quietHoursStart,
+      quietHoursEnd: config.quietHoursEnd
+    });
+
     // Start the batch timer automatically
     this.startBatchTimer();
   }
@@ -109,6 +119,14 @@ export class NotificationManager {
       ...notification,
       queuedAt: new Date()
     };
+
+    log.debug('Notification queued', {
+      type: notification.type,
+      agentId: notification.agentId,
+      taskId: notification.taskId,
+      projectName: notification.projectName,
+      priority: notification.priority
+    });
 
     switch (notification.type) {
       case 'question':
@@ -199,15 +217,30 @@ export class NotificationManager {
       thread_ts: notification.threadTs
     };
 
+    log.time(`send-${notification.type}-${notification.taskId}`);
     try {
       const result = await this.sendFn(message);
+      log.timeEnd(`send-${notification.type}-${notification.taskId}`, {
+        type: notification.type,
+        taskId: notification.taskId,
+        channel: this.config.channelId
+      });
       this.stats.totalSent++;
+      log.debug('Notification sent successfully', {
+        type: notification.type,
+        taskId: notification.taskId,
+        threadTs: result
+      });
       return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(
-        `Failed to send ${notification.type} notification for task ${notification.taskId}: ${errorMessage}`
-      );
+      log.timeEnd(`send-${notification.type}-${notification.taskId}`);
+      const err = error instanceof Error ? error : new Error(String(error));
+      log.error('Failed to send notification', err, {
+        type: notification.type,
+        taskId: notification.taskId,
+        agentId: notification.agentId,
+        projectName: notification.projectName
+      });
       this.stats.totalFailed = (this.stats.totalFailed || 0) + 1;
       return undefined;
     }
@@ -256,12 +289,17 @@ export class NotificationManager {
    */
   setDnd(durationMs: number): void {
     this.dndUntil = new Date(Date.now() + durationMs);
+    log.info('Do Not Disturb enabled', {
+      durationMs,
+      until: this.dndUntil.toISOString()
+    });
   }
 
   /**
    * Disables Do Not Disturb mode.
    */
   disableDnd(): void {
+    log.info('Do Not Disturb disabled');
     this.dndUntil = null;
   }
 
@@ -288,6 +326,7 @@ export class NotificationManager {
   startBatchTimer(): void {
     if (this.batchTimer) return;
 
+    log.debug('Starting batch timer', { intervalMs: this.config.batchIntervalMs });
     this.batchTimer = setInterval(async () => {
       await this.flush();
     }, this.config.batchIntervalMs);
@@ -298,6 +337,7 @@ export class NotificationManager {
    */
   stopBatchTimer(): void {
     if (this.batchTimer) {
+      log.debug('Stopping batch timer');
       clearInterval(this.batchTimer);
       this.batchTimer = null;
     }
@@ -359,6 +399,12 @@ export class NotificationManager {
    * to prevent memory leaks from the batch timer.
    */
   destroy(): void {
+    log.info('NotificationManager destroying', {
+      pendingQuestions: this.notificationQueue.questions.length,
+      pendingBlockers: this.notificationQueue.blockers.length,
+      pendingReviews: this.notificationQueue.reviews.length,
+      pendingCompletions: this.notificationQueue.completions.length
+    });
     this.stopBatchTimer();
     this.notificationQueue = {
       questions: [],

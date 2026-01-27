@@ -15,6 +15,9 @@ import type {
   PermissionMode,
 } from '@anthropic-ai/claude-agent-sdk';
 import { AgentConfig, AgentEvent } from './types.js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('SDKAdapter');
 
 // Re-export SDK types we need
 export type { Query, Options, SDKMessage, SDKResultMessage };
@@ -25,7 +28,7 @@ export type { Query, Options, SDKMessage, SDKResultMessage };
 export const MODEL_MAP: Record<AgentConfig['model'], string> = {
   opus: 'claude-opus-4-20250514',
   sonnet: 'claude-sonnet-4-5-20250929',
-  haiku: 'claude-haiku-3-20250307',
+  haiku: 'claude-3-5-haiku-20241022',
 };
 
 /**
@@ -104,9 +107,41 @@ export interface ActiveQuery {
 }
 
 /**
- * Interface for the SDK adapter - allows mocking in tests
+ * Generic message handler type that works with any message format
  */
-export interface ISDKAdapter {
+export type GenericMessageHandler = (message: unknown, sessionId: string) => void;
+
+/**
+ * Base interface for agent adapters - allows both SDK and CLI adapters
+ * to be used interchangeably by the AgentManager
+ */
+export interface IAgentAdapter {
+  /**
+   * Start a new agent query
+   */
+  startQuery(
+    sessionId: string,
+    prompt: string,
+    config: SDKAdapterConfig,
+    onMessage?: GenericMessageHandler
+  ): Promise<ActiveQuery>;
+
+  /**
+   * Extract token usage from a result message
+   */
+  extractUsage(result: unknown): TokenUsage;
+
+  /**
+   * Map an adapter-specific message to our AgentEvent type
+   */
+  mapToAgentEvent(message: unknown, sessionId: string): AgentEvent | null;
+}
+
+/**
+ * Interface for the SDK adapter - allows mocking in tests
+ * @deprecated Use IAgentAdapter for new code
+ */
+export interface ISDKAdapter extends IAgentAdapter {
   /**
    * Start a new agent query
    */
@@ -178,7 +213,9 @@ export class SDKAdapter implements ISDKAdapter {
           }
         : { type: 'preset', preset: 'claude_code' },
       maxTurns: config.maxTurns,
-      permissionMode: config.permissionMode ?? 'default',
+      permissionMode: config.permissionMode ?? 'bypassPermissions',
+      // Required when using bypassPermissions mode
+      allowDangerouslySkipPermissions: true,
       allowedTools: config.allowedTools,
       abortController,
       // Don't persist sessions for orchestrated agents
@@ -193,17 +230,36 @@ export class SDKAdapter implements ISDKAdapter {
     const processStream = async () => {
       try {
         for await (const message of query) {
+          // Log all messages for debugging
+          const subtype = 'subtype' in message ? (message as { subtype?: string }).subtype : undefined;
+          log.debug('SDK message received', {
+            sessionId,
+            messageType: message.type,
+            subtype,
+          });
           if (onMessage) {
             onMessage(message, sessionId);
           }
         }
+        log.debug('Stream ended normally', { sessionId });
+      } catch (err) {
+        log.error('SDK stream error', err instanceof Error ? err : new Error(String(err)), {
+          sessionId,
+        });
+
+        // Re-throw to be caught by the outer handler
+        throw err;
       } finally {
         isRunning = false;
       }
     };
 
-    // Start processing in the background
-    const streamPromise = processStream();
+    // Start processing in the background - attach error handler to prevent unhandled rejection
+    const streamPromise = processStream().catch(err => {
+      log.error('Agent session failed', err instanceof Error ? err : new Error(String(err)), {
+        sessionId,
+      });
+    });
 
     const activeQuery: ActiveQuery = {
       query,

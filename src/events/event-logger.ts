@@ -16,6 +16,10 @@ import {
   TypedEvent,
   EventFilter,
 } from './event-types.js';
+import { logger } from '../logging/index.js';
+
+// Create component logger for EventLogger
+const log = logger.child('EventLogger');
 
 // ============================================================================
 // Configuration
@@ -120,6 +124,7 @@ export class EventLogger {
    */
   enable(): this {
     if (this.enabled) {
+      log.debug('Event logging already enabled');
       return this;
     }
 
@@ -128,6 +133,12 @@ export class EventLogger {
     // Subscribe to all events using pattern matching
     this.unsubscribe = this.eventBus.onPattern(/.*/, (event) => {
       this.handleEvent(event);
+    });
+
+    log.debug('Event logging enabled', {
+      maxEvents: this.options.maxEvents,
+      logToConsole: this.options.logToConsole,
+      typeFilter: this.options.typeFilter,
     });
 
     return this;
@@ -140,6 +151,7 @@ export class EventLogger {
    */
   disable(): this {
     if (!this.enabled) {
+      log.debug('Event logging already disabled');
       return this;
     }
 
@@ -149,6 +161,8 @@ export class EventLogger {
       this.unsubscribe();
       this.unsubscribe = null;
     }
+
+    log.debug('Event logging disabled', { eventsCaptured: this.events.length });
 
     return this;
   }
@@ -255,7 +269,9 @@ export class EventLogger {
    * @returns this for chaining
    */
   clearEvents(): this {
+    const clearedCount = this.events.length;
     this.events = [];
+    log.debug('Event log cleared', { clearedCount });
     return this;
   }
 
@@ -270,12 +286,21 @@ export class EventLogger {
    * @param options - Export options
    */
   async exportToFile(filePath: string, options: ExportOptions = {}): Promise<void> {
+    log.time('exportToFile');
+
     let events = this.events;
 
     // Apply filter if provided
     if (options.filter) {
       events = this.getEvents(options.filter);
     }
+
+    log.debug('Exporting events to file', {
+      filePath,
+      eventCount: events.length,
+      pretty: options.pretty ?? false,
+      hasFilter: !!options.filter,
+    });
 
     // Serialize events
     const serialized = events.map((event) => this.serializeEvent(event));
@@ -289,6 +314,8 @@ export class EventLogger {
 
     // Write file
     await fs.writeFile(filePath, content, 'utf-8');
+
+    log.timeEnd('exportToFile', { filePath, eventCount: events.length, bytesWritten: content.length });
   }
 
   // ==========================================================================
@@ -301,6 +328,7 @@ export class EventLogger {
   private handleEvent(event: TypedEvent<EventType, unknown>): void {
     // Apply type filter if configured
     if (this.options.typeFilter && !this.options.typeFilter.includes(event.type)) {
+      log.debug('Event filtered out by type filter', { eventType: event.type });
       return;
     }
 
@@ -308,8 +336,13 @@ export class EventLogger {
     this.events.push(event);
 
     // Trim if over limit
+    const trimmed = this.events.length > this.options.maxEvents;
     while (this.events.length > this.options.maxEvents) {
       this.events.shift();
+    }
+
+    if (trimmed) {
+      log.debug('Event log trimmed to max size', { maxEvents: this.options.maxEvents });
     }
 
     // Log to console if enabled
@@ -319,24 +352,21 @@ export class EventLogger {
   }
 
   /**
-   * Log an event to the console
+   * Log an event to the console using structured logging
+   * Uses INFO level to match original behavior (always visible when logToConsole is enabled)
    */
   private logToConsole(event: TypedEvent<EventType, unknown>): void {
-    const parts: string[] = [];
+    // Use structured logging instead of raw console.log
+    // Using INFO level to ensure visibility when logToConsole option is enabled
+    const eventLog = event.correlationId
+      ? log.withCorrelationId(event.correlationId)
+      : log;
 
-    if (this.options.includeTimestamp) {
-      parts.push(`[${event.timestamp.toISOString()}]`);
-    }
-
-    parts.push(`[${event.type}]`);
-
-    if (event.correlationId) {
-      parts.push(`[${event.correlationId}]`);
-    }
-
-    parts.push(JSON.stringify(event.payload));
-
-    console.log(parts.join(' '));
+    eventLog.info('Event captured', {
+      eventType: event.type,
+      timestamp: event.timestamp.toISOString(),
+      payload: event.payload,
+    });
   }
 
   /**

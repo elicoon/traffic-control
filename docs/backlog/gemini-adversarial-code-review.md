@@ -181,7 +181,7 @@ async function reviewCodeChanges(changes: CodeChanges): Promise<ReviewResults> {
 ### Configuration
 
 ```yaml
-# trafficControl config
+# traffic-control config
 review:
   adversarial:
     enabled: true

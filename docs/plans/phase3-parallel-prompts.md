@@ -134,7 +134,7 @@ class RetrospectiveGenerator {
 - Follow TDD: write failing tests first
 - Use existing patterns from Phase 1/2 code
 - Integrate with existing TaskRepository and session tracking
-- Markdown files go to `trafficControl/retrospectives/` directory
+- Markdown files go to `traffic-control/retrospectives/` directory
 
 ---
 
@@ -158,7 +158,7 @@ Build the learning propagation system that:
 
 ### Learning File Structure
 ```
-trafficControl/
+traffic-control/
 ├── learnings/
 │   ├── global.md           # Cross-project patterns
 │   ├── project-{id}.md     # Project-specific learnings

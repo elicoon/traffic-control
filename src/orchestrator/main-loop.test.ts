@@ -127,6 +127,17 @@ const createDefaultConfig = (): OrchestrationConfig => ({
     backoffMultiplier: 2,
   },
   maxConsecutiveDbFailures: 3,
+  // Pre-flight configuration
+  runPreFlightChecks: false, // Disable in tests
+  requirePreFlightConfirmation: false,
+  // Safety system configuration
+  enableTaskApproval: false,
+  statusCheckInIntervalMs: 0, // Disable in tests
+  dailyBudgetUsd: 100,
+  weeklyBudgetUsd: 500,
+  hardStopAtBudgetLimit: false,
+  circuitBreakerFailureThreshold: 5,
+  circuitBreakerResetTimeoutMs: 5000,
 });
 
 describe('MainLoop', () => {

@@ -92,8 +92,8 @@ describe('ConfigLoader', () => {
         },
         capacity: {
           maxConcurrentAgents: 8,
-          opusSessionLimit: 50,
-          sonnetSessionLimit: 100,
+          opusSessionLimit: 1,
+          sonnetSessionLimit: 2,
         },
         scheduling: {
           pollIntervalMs: 4000,
@@ -195,8 +195,8 @@ describe('ConfigLoader', () => {
 
       expect(config.maxConcurrentAgents).toBe(3); // default
       expect(config.pollIntervalMs).toBe(5000); // default
-      expect(config.opusSessionLimit).toBe(50); // default
-      expect(config.sonnetSessionLimit).toBe(100); // default
+      expect(config.opusSessionLimit).toBe(1); // default (conservative)
+      expect(config.sonnetSessionLimit).toBe(2); // default (conservative)
       expect(config.reportIntervalMs).toBe(43200000); // default (12 hours)
       expect(config.quietHoursStart).toBe(0); // default
       expect(config.quietHoursEnd).toBe(7); // default
@@ -349,8 +349,8 @@ describe('ConfigLoader', () => {
       const defaults = ConfigLoader.getDefaults();
 
       expect(defaults.maxConcurrentAgents).toBe(3);
-      expect(defaults.opusSessionLimit).toBe(50);
-      expect(defaults.sonnetSessionLimit).toBe(100);
+      expect(defaults.opusSessionLimit).toBe(1);
+      expect(defaults.sonnetSessionLimit).toBe(2);
       expect(defaults.pollIntervalMs).toBe(5000);
       expect(defaults.reportIntervalMs).toBe(43200000);
       expect(defaults.learningsPath).toBe('./learnings');
@@ -371,8 +371,8 @@ describe('ConfigLoader', () => {
         slackToken: 'xoxb-secret-token',
         slackChannelId: 'C12345',
         maxConcurrentAgents: 5,
-        opusSessionLimit: 50,
-        sonnetSessionLimit: 100,
+        opusSessionLimit: 1,
+        sonnetSessionLimit: 2,
         pollIntervalMs: 5000,
         reportIntervalMs: 43200000,
         learningsPath: './learnings',

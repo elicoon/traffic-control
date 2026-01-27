@@ -81,3 +81,59 @@ export type {
 
 // Main loop
 export { MainLoop } from './main-loop.js';
+
+// Rolling spend monitor types and interfaces (for short-term anomaly detection)
+export type {
+  SpendRecord,
+  RollingSpendMonitorConfig,
+  ThresholdCheckResult,
+  SpendAlert,
+  TaskSpend,
+} from './spend-monitor.js';
+
+// Rolling spend monitor (tracks spending in rolling time windows)
+export { RollingSpendMonitor, formatSpendAlert } from './spend-monitor.js';
+
+// Productivity monitor types and interfaces
+export type {
+  OutputType,
+  ProductivityLevel,
+  ProductivityStatus,
+  OutputCounts,
+  AgentProductivityStats,
+  ProductivityAlert,
+  ProductivityMonitorConfig,
+  AlertCallback,
+} from './productivity-monitor.js';
+
+// Productivity monitor
+export { ProductivityMonitor } from './productivity-monitor.js';
+
+// Circuit breaker types and interfaces
+export type {
+  CircuitBreakerTripReason,
+  CircuitBreakerStatus,
+  OperationResult,
+  CircuitBreakerConfig,
+  CircuitBreakerEvent,
+} from './circuit-breaker.js';
+
+// Circuit breaker
+export { CircuitBreaker, createCircuitBreaker } from './circuit-breaker.js';
+
+// Pre-flight types and interfaces
+export type {
+  WarningType,
+  PreFlightWarning,
+  TaskSummary,
+  PreFlightResult,
+  PreFlightConfig,
+  PreFlightDependencies,
+} from './pre-flight.js';
+
+// Pre-flight checker
+export {
+  PreFlightChecker,
+  createPreFlightChecker,
+  DEFAULT_PREFLIGHT_CONFIG,
+} from './pre-flight.js';

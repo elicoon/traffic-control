@@ -43,6 +43,9 @@ describe('VisualReviewer', () => {
     eta: null,
     started_at: null,
     completed_at: null,
+    priority_confirmed: false,
+    priority_confirmed_at: null,
+    priority_confirmed_by: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   };

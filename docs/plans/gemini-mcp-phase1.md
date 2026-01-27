@@ -50,7 +50,7 @@ Before starting:
 
 ### Step 1: Initialize project structure
 
-Create directory `gemini-review-mcp/` at the same level as `trafficControl/`.
+Create directory `gemini-review-mcp/` at the same level as `traffic-control/`.
 
 ```bash
 mkdir gemini-review-mcp
@@ -70,7 +70,7 @@ npm install -D typescript @types/node vitest
 - `@modelcontextprotocol/sdk` - MCP server SDK for building tools
 - `zod` - Schema validation for tool parameters
 - `dotenv` - Environment variable loading
-- `vitest` - Testing framework (consistent with trafficControl)
+- `vitest` - Testing framework (consistent with traffic-control)
 
 ### Step 3: Create tsconfig.json
 
@@ -1505,7 +1505,7 @@ Create the following files in `gemini-review-mcp/`:
 
 4. `src/gemini-client.test.ts` - Unit tests
 
-**Reference:** See trafficControl/docs/plans/gemini-mcp-phase1.md for detailed specifications.
+**Reference:** See traffic-control/docs/plans/gemini-mcp-phase1.md for detailed specifications.
 ```
 
 ### Prompt 2: MCP Server Implementation
@@ -1545,7 +1545,7 @@ Create the following files in `gemini-review-mcp/src/`:
 - Tool calls return ReviewResult JSON
 - Invalid inputs return error responses
 
-**Reference:** See trafficControl/docs/plans/gemini-mcp-phase1.md for detailed specifications.
+**Reference:** See traffic-control/docs/plans/gemini-mcp-phase1.md for detailed specifications.
 ```
 
 ### Prompt 3: Testing and Documentation
@@ -1582,5 +1582,5 @@ You are completing the testing and documentation for Gemini MCP server.
 - README is complete and accurate
 - Manual testing steps are documented and work
 
-**Reference:** See trafficControl/docs/plans/gemini-mcp-phase1.md for detailed specifications.
+**Reference:** See traffic-control/docs/plans/gemini-mcp-phase1.md for detailed specifications.
 ```

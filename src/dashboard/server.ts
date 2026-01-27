@@ -527,8 +527,9 @@ export class DashboardServer {
       try {
         this.server = this.app.listen(this.config.port, () => {
           this.startTime = new Date();
-          const address = this.server!.address() as AddressInfo;
-          console.log(`Dashboard server started on port ${address.port}`);
+          const address = this.server?.address();
+          const port = typeof address === 'object' && address ? address.port : this.config.port;
+          console.log(`Dashboard server started on port ${port}`);
           resolve();
         });
 

@@ -19,6 +19,10 @@ import {
   SystemErrorPayload,
   createEvent,
 } from './event-types.js';
+import { logger } from '../logging/index.js';
+
+// Create component logger for EventBus
+const log = logger.child('EventBus');
 
 // ============================================================================
 // Configuration
@@ -114,9 +118,12 @@ export class EventBus {
     const internalHandler = handler as unknown as InternalHandler;
     handlers.add(internalHandler);
 
+    log.debug('Handler registered', { eventType: type, handlerCount: handlers.size });
+
     // Return unsubscribe function
     return () => {
       handlers.delete(internalHandler);
+      log.debug('Handler unregistered', { eventType: type, handlerCount: handlers.size });
     };
   }
 
@@ -154,8 +161,11 @@ export class EventBus {
     const patternHandler: PatternHandler = { pattern, handler };
     this.patternHandlers.add(patternHandler);
 
+    log.debug('Pattern handler registered', { pattern: pattern.toString(), patternHandlerCount: this.patternHandlers.size });
+
     return () => {
       this.patternHandlers.delete(patternHandler);
+      log.debug('Pattern handler unregistered', { pattern: pattern.toString(), patternHandlerCount: this.patternHandlers.size });
     };
   }
 
@@ -182,10 +192,15 @@ export class EventBus {
    */
   removeAllListeners(type?: EventType): void {
     if (type) {
+      const count = this.handlers.get(type)?.size ?? 0;
       this.handlers.delete(type);
+      log.debug('All listeners removed for event type', { eventType: type, removedCount: count });
     } else {
+      const typeCount = this.handlers.size;
+      const patternCount = this.patternHandlers.size;
       this.handlers.clear();
       this.patternHandlers.clear();
+      log.debug('All listeners removed', { typeHandlersCleared: typeCount, patternHandlersCleared: patternCount });
     }
   }
 
@@ -219,11 +234,33 @@ export class EventBus {
   emit<T extends EventType>(
     event: TypedEvent<T, PayloadFor<T>>
   ): void {
+    // Start timing event processing
+    const timerLabel = `emit:${event.type}:${Date.now()}`;
+    log.time(timerLabel);
+
     // Add to history
     this.addToHistory(event as TypedEvent<EventType, unknown>);
 
     // Get type-specific handlers
     const typeHandlers = this.handlers.get(event.type as EventType);
+    const typeHandlerCount = typeHandlers?.size ?? 0;
+
+    // Count matching pattern handlers
+    let patternHandlerCount = 0;
+    for (const { pattern } of this.patternHandlers) {
+      if (pattern.test(event.type)) {
+        patternHandlerCount++;
+      }
+    }
+
+    // Log event emission with payload summary
+    log.debug('Event emitted', {
+      eventType: event.type,
+      correlationId: event.correlationId,
+      typeHandlerCount,
+      patternHandlerCount,
+      payloadKeys: event.payload ? Object.keys(event.payload as object) : [],
+    });
 
     // Execute type-specific handlers
     if (typeHandlers) {
@@ -238,6 +275,9 @@ export class EventBus {
         this.safeExecuteHandler(handler, event as TypedEvent<EventType, unknown>);
       }
     }
+
+    // End timing
+    log.timeEnd(timerLabel, { eventType: event.type, totalHandlers: typeHandlerCount + patternHandlerCount });
   }
 
   /**
@@ -373,12 +413,14 @@ export class EventBus {
    * Handle an error from a handler
    */
   private handleHandlerError(error: unknown, originalEvent: TypedEvent<EventType, unknown>): void {
-    // Log error if configured
+    // Log error using structured logging
     if (this.config.logErrors) {
-      console.error(
-        `EventBus: Handler error for event ${originalEvent.type}:`,
-        error
-      );
+      const errorObj = error instanceof Error ? error : new Error(String(error));
+      log.error('Event handler failed', errorObj, {
+        eventType: originalEvent.type,
+        correlationId: originalEvent.correlationId,
+        payloadKeys: originalEvent.payload ? Object.keys(originalEvent.payload as object) : [],
+      });
     }
 
     // Emit system:error event (with guard against infinite loops)

@@ -284,7 +284,7 @@ You are implementing the context budget tracking system for TrafficControl.
 - This prevents performance degradation from overloaded context
 
 **Your Task:**
-Create the following files in `trafficControl/src/orchestrator/`:
+Create the following files in `traffic-control/src/orchestrator/`:
 
 1. `context-budget.ts` - Types and interfaces for context tracking
 2. `context-budget-manager.ts` - Manager class that:
@@ -301,7 +301,7 @@ Create the following files in `trafficControl/src/orchestrator/`:
 - Budget thresholds trigger appropriate warnings
 - Code follows existing TypeScript patterns in the codebase
 
-**Reference:** See trafficControl/docs/plans/phase1-context-optimization.md for detailed specifications.
+**Reference:** See traffic-control/docs/plans/phase1-context-optimization.md for detailed specifications.
 ```
 
 ### Prompt 2: Orchestrator Integration
@@ -315,7 +315,7 @@ You are integrating context budget tracking into the TrafficControl orchestrator
 - Now we need to integrate it into the main orchestrator
 
 **Your Task:**
-Modify `trafficControl/src/orchestrator.ts` to:
+Modify `traffic-control/src/orchestrator.ts` to:
 
 1. Import and initialize ContextBudgetManager in constructor
 2. Add `checkContextBudget()` method called during tick()
@@ -333,7 +333,7 @@ Modify `trafficControl/src/orchestrator.ts` to:
 - Existing tests continue to pass
 - Sub-agents receive minimal, focused context
 
-**Reference:** See trafficControl/docs/plans/phase1-context-optimization.md for detailed specifications.
+**Reference:** See traffic-control/docs/plans/phase1-context-optimization.md for detailed specifications.
 ```
 
 ### Prompt 3: Capabilities Documentation
@@ -347,14 +347,14 @@ You are documenting the available tools and capabilities for TrafficControl agen
 - Currently there's no documentation of these capabilities
 
 **Your Task:**
-1. Create `trafficControl/CAPABILITIES.md` documenting:
+1. Create `traffic-control/CAPABILITIES.md` documenting:
    - Available MCP servers (Supabase, Playwright, Google Calendar, Google Drive, etc.)
    - Available skills (frontend-design, code-review, brainstorming, etc.)
    - Built-in tools (Read, Write, Edit, Glob, Grep, Bash, etc.)
    - When to use each capability
    - Examples of effective usage
 
-2. Update `trafficControl/agents.md` to:
+2. Update `traffic-control/agents.md` to:
    - Reference CAPABILITIES.md
    - Add section on "Selecting the Right Tool"
 

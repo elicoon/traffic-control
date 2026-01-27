@@ -1,4 +1,7 @@
 import { formatStatusReport, StatusReportMetrics, RecommendationData } from './bot.js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('Slack.CommandHandler');
 
 /**
  * Status information from the orchestrator.
@@ -82,30 +85,57 @@ export class SlackCommandHandler {
     const normalizedCommand = command.toLowerCase().trim();
     const trimmedArgs = args.map(a => a.trim()).filter(Boolean);
 
+    log.debug('Handling command', {
+      command: normalizedCommand,
+      args: trimmedArgs,
+      userId
+    });
+
     try {
+      log.time(`command-${normalizedCommand}`);
+      let result: string;
+
       switch (normalizedCommand) {
         case 'status':
-          return await this.handleStatus();
+          result = await this.handleStatus();
+          break;
         case 'pause':
-          return await this.handlePause(trimmedArgs);
+          result = await this.handlePause(trimmedArgs);
+          break;
         case 'resume':
-          return await this.handleResume(trimmedArgs);
+          result = await this.handleResume(trimmedArgs);
+          break;
         case 'add':
-          return await this.handleAdd(trimmedArgs);
+          result = await this.handleAdd(trimmedArgs);
+          break;
         case 'prioritize':
-          return await this.handlePrioritize(trimmedArgs);
+          result = await this.handlePrioritize(trimmedArgs);
+          break;
         case 'report':
-          return await this.handleReport();
+          result = await this.handleReport();
+          break;
         case 'dnd':
-          return await this.handleDnd(trimmedArgs);
+          result = await this.handleDnd(trimmedArgs);
+          break;
         case 'help':
-          return this.getHelpText();
+          result = this.getHelpText();
+          break;
         default:
-          return `Unknown command: "${command}". Use \`help\` to see available commands.`;
+          log.debug('Unknown command received', { command: normalizedCommand, userId });
+          result = `Unknown command: "${command}". Use \`help\` to see available commands.`;
       }
+
+      log.timeEnd(`command-${normalizedCommand}`, { command: normalizedCommand, userId });
+      return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return `Error: ${errorMessage}`;
+      log.timeEnd(`command-${normalizedCommand}`);
+      const err = error instanceof Error ? error : new Error(String(error));
+      log.error('Command execution failed', err, {
+        command: normalizedCommand,
+        args: trimmedArgs,
+        userId
+      });
+      return `Error: ${err.message}`;
     }
   }
 
@@ -136,17 +166,20 @@ export class SlackCommandHandler {
   private async handlePause(args: string[]): Promise<string> {
     if (args.length === 0) {
       // Pause all
+      log.info('Pausing all agent activity');
       await this.deps.pause();
       return 'Paused all agent activity.';
     }
 
     // Pause specific project
     const projectName = args.join(' ');
+    log.info('Pausing project', { projectName });
     const success = await this.deps.pauseProject(projectName);
 
     if (success) {
       return `Project "${projectName}" has been paused.`;
     } else {
+      log.warn('Project not found for pause', { projectName });
       return `Project "${projectName}" not found.`;
     }
   }
@@ -157,17 +190,20 @@ export class SlackCommandHandler {
   private async handleResume(args: string[]): Promise<string> {
     if (args.length === 0) {
       // Resume all
+      log.info('Resuming all agent activity');
       await this.deps.resume();
       return 'Resumed all agent activity.';
     }
 
     // Resume specific project
     const projectName = args.join(' ');
+    log.info('Resuming project', { projectName });
     const success = await this.deps.resumeProject(projectName);
 
     if (success) {
       return `Project "${projectName}" has been resumed.`;
     } else {
+      log.warn('Project not found for resume', { projectName });
       return `Project "${projectName}" not found.`;
     }
   }
@@ -190,7 +226,9 @@ export class SlackCommandHandler {
       return 'Please provide a task description.';
     }
 
+    log.info('Adding task via Slack command', { descriptionLength: description.length });
     const task = await this.deps.addTask(description);
+    log.info('Task added', { taskId: task.id, taskTitle: task.title });
     return `Added task: "${task.title}" (ID: ${task.id})`;
   }
 
@@ -203,11 +241,13 @@ export class SlackCommandHandler {
     }
 
     const projectName = args.join(' ');
+    log.info('Prioritizing project', { projectName });
     const success = await this.deps.prioritizeProject(projectName);
 
     if (success) {
       return `Project "${projectName}" has been prioritized.`;
     } else {
+      log.warn('Project not found for prioritize', { projectName });
       return `Project "${projectName}" not found.`;
     }
   }
@@ -226,6 +266,7 @@ export class SlackCommandHandler {
   private async handleDnd(args: string[]): Promise<string> {
     // Check for "off" to disable
     if (args.length > 0 && args[0].toLowerCase() === 'off') {
+      log.info('Disabling Do Not Disturb via command');
       this.deps.disableDnd();
       return 'Do Not Disturb has been disabled.';
     }
@@ -240,6 +281,7 @@ export class SlackCommandHandler {
       }
     }
 
+    log.info('Enabling Do Not Disturb via command', { durationMs });
     this.deps.setDnd(durationMs);
     const durationStr = SlackCommandHandler.formatDuration(durationMs);
     return `Do Not Disturb enabled for ${durationStr}. Only critical blockers will come through.`;

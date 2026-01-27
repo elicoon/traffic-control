@@ -23,16 +23,16 @@ Before starting, ensure you have:
 ## Task 1: Project Setup
 
 **Files:**
-- Create: `trafficControl/src/index.ts`
-- Create: `trafficControl/package.json`
-- Create: `trafficControl/tsconfig.json`
-- Create: `trafficControl/.env.example`
-- Create: `trafficControl/.gitignore`
+- Create: `traffic-control/src/index.ts`
+- Create: `traffic-control/package.json`
+- Create: `traffic-control/tsconfig.json`
+- Create: `traffic-control/.env.example`
+- Create: `traffic-control/.gitignore`
 
 **Step 1: Initialize package.json**
 
 ```bash
-cd trafficControl
+cd traffic-control
 npm init -y
 ```
 
@@ -125,7 +125,7 @@ Expected: "TrafficControl Phase 1 - Foundation" printed to console
 **Step 9: Commit**
 
 ```bash
-git add trafficControl/
+git add traffic-control/
 git commit -m "feat(trafficcontrol): initialize project structure"
 ```
 
@@ -134,13 +134,13 @@ git commit -m "feat(trafficcontrol): initialize project structure"
 ## Task 2: Supabase Schema Setup
 
 **Files:**
-- Create: `trafficControl/src/db/schema.sql` (reference only)
-- Create: `trafficControl/src/db/client.ts`
-- Test: `trafficControl/src/db/client.test.ts`
+- Create: `traffic-control/src/db/schema.sql` (reference only)
+- Create: `traffic-control/src/db/client.ts`
+- Test: `traffic-control/src/db/client.test.ts`
 
 **Step 1: Write the failing test**
 
-Create `trafficControl/src/db/client.test.ts`:
+Create `traffic-control/src/db/client.test.ts`:
 
 ```typescript
 import { describe, it, expect } from 'vitest';
@@ -169,7 +169,7 @@ Expected: FAIL - module not found
 
 **Step 3: Create the Supabase client**
 
-Create `trafficControl/src/db/client.ts`:
+Create `traffic-control/src/db/client.ts`:
 
 ```typescript
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -315,7 +315,7 @@ CREATE INDEX idx_tc_usage_log_session_id ON tc_usage_log(session_id);
 **Step 6: Commit**
 
 ```bash
-git add trafficControl/src/db/
+git add traffic-control/src/db/
 git commit -m "feat(trafficcontrol): add Supabase client and schema"
 ```
 
@@ -324,14 +324,14 @@ git commit -m "feat(trafficcontrol): add Supabase client and schema"
 ## Task 3: Database Repository Layer
 
 **Files:**
-- Create: `trafficControl/src/db/repositories/projects.ts`
-- Create: `trafficControl/src/db/repositories/tasks.ts`
-- Test: `trafficControl/src/db/repositories/projects.test.ts`
-- Test: `trafficControl/src/db/repositories/tasks.test.ts`
+- Create: `traffic-control/src/db/repositories/projects.ts`
+- Create: `traffic-control/src/db/repositories/tasks.ts`
+- Test: `traffic-control/src/db/repositories/projects.test.ts`
+- Test: `traffic-control/src/db/repositories/tasks.test.ts`
 
 **Step 1: Write the failing test for projects**
 
-Create `trafficControl/src/db/repositories/projects.test.ts`:
+Create `traffic-control/src/db/repositories/projects.test.ts`:
 
 ```typescript
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -387,7 +387,7 @@ Expected: FAIL - module not found
 
 **Step 3: Create ProjectRepository**
 
-Create `trafficControl/src/db/repositories/projects.ts`:
+Create `traffic-control/src/db/repositories/projects.ts`:
 
 ```typescript
 import { SupabaseClient } from '@supabase/supabase-js';
@@ -471,7 +471,7 @@ Expected: PASS
 
 **Step 5: Write the failing test for tasks**
 
-Create `trafficControl/src/db/repositories/tasks.test.ts`:
+Create `traffic-control/src/db/repositories/tasks.test.ts`:
 
 ```typescript
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -536,7 +536,7 @@ Expected: FAIL - module not found
 
 **Step 7: Create TaskRepository**
 
-Create `trafficControl/src/db/repositories/tasks.ts`:
+Create `traffic-control/src/db/repositories/tasks.ts`:
 
 ```typescript
 import { SupabaseClient } from '@supabase/supabase-js';
@@ -669,7 +669,7 @@ Expected: PASS
 **Step 9: Commit**
 
 ```bash
-git add trafficControl/src/db/repositories/
+git add traffic-control/src/db/repositories/
 git commit -m "feat(trafficcontrol): add project and task repositories"
 ```
 
@@ -678,13 +678,13 @@ git commit -m "feat(trafficcontrol): add project and task repositories"
 ## Task 4: Slack Bot Setup
 
 **Files:**
-- Create: `trafficControl/src/slack/bot.ts`
-- Create: `trafficControl/src/slack/handlers.ts`
-- Test: `trafficControl/src/slack/bot.test.ts`
+- Create: `traffic-control/src/slack/bot.ts`
+- Create: `traffic-control/src/slack/handlers.ts`
+- Test: `traffic-control/src/slack/bot.test.ts`
 
 **Step 1: Write the failing test**
 
-Create `trafficControl/src/slack/bot.test.ts`:
+Create `traffic-control/src/slack/bot.test.ts`:
 
 ```typescript
 import { describe, it, expect, vi } from 'vitest';
@@ -725,7 +725,7 @@ Expected: FAIL - module not found
 
 **Step 3: Create the Slack bot**
 
-Create `trafficControl/src/slack/bot.ts`:
+Create `traffic-control/src/slack/bot.ts`:
 
 ```typescript
 import { App, LogLevel } from '@slack/bolt';
@@ -808,7 +808,7 @@ Expected: PASS
 
 **Step 5: Create message handlers**
 
-Create `trafficControl/src/slack/handlers.ts`:
+Create `traffic-control/src/slack/handlers.ts`:
 
 ```typescript
 import { App } from '@slack/bolt';
@@ -888,7 +888,7 @@ export function setupHandlers(): void {
 **Step 6: Commit**
 
 ```bash
-git add trafficControl/src/slack/
+git add traffic-control/src/slack/
 git commit -m "feat(trafficcontrol): add Slack bot with message formatting and handlers"
 ```
 
@@ -897,13 +897,13 @@ git commit -m "feat(trafficcontrol): add Slack bot with message formatting and h
 ## Task 5: Agent Manager (Basic)
 
 **Files:**
-- Create: `trafficControl/src/agent/manager.ts`
-- Create: `trafficControl/src/agent/types.ts`
-- Test: `trafficControl/src/agent/manager.test.ts`
+- Create: `traffic-control/src/agent/manager.ts`
+- Create: `traffic-control/src/agent/types.ts`
+- Test: `traffic-control/src/agent/manager.test.ts`
 
 **Step 1: Create types**
 
-Create `trafficControl/src/agent/types.ts`:
+Create `traffic-control/src/agent/types.ts`:
 
 ```typescript
 export interface AgentConfig {
@@ -934,7 +934,7 @@ export type AgentEventHandler = (event: AgentEvent) => Promise<void>;
 
 **Step 2: Write the failing test**
 
-Create `trafficControl/src/agent/manager.test.ts`:
+Create `traffic-control/src/agent/manager.test.ts`:
 
 ```typescript
 import { describe, it, expect, vi } from 'vitest';
@@ -971,7 +971,7 @@ Expected: FAIL - module not found
 
 **Step 4: Create AgentManager**
 
-Create `trafficControl/src/agent/manager.ts`:
+Create `traffic-control/src/agent/manager.ts`:
 
 ```typescript
 import { AgentConfig, AgentSession, AgentEvent, AgentEventHandler } from './types.js';
@@ -1088,7 +1088,7 @@ Expected: PASS
 **Step 6: Commit**
 
 ```bash
-git add trafficControl/src/agent/
+git add traffic-control/src/agent/
 git commit -m "feat(trafficcontrol): add basic agent manager with session tracking"
 ```
 
@@ -1097,12 +1097,12 @@ git commit -m "feat(trafficcontrol): add basic agent manager with session tracki
 ## Task 6: Orchestrator Core
 
 **Files:**
-- Create: `trafficControl/src/orchestrator.ts`
-- Test: `trafficControl/src/orchestrator.test.ts`
+- Create: `traffic-control/src/orchestrator.ts`
+- Test: `traffic-control/src/orchestrator.test.ts`
 
 **Step 1: Write the failing test**
 
-Create `trafficControl/src/orchestrator.test.ts`:
+Create `traffic-control/src/orchestrator.test.ts`:
 
 ```typescript
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -1149,7 +1149,7 @@ Expected: FAIL - module not found
 
 **Step 3: Create Orchestrator**
 
-Create `trafficControl/src/orchestrator.ts`:
+Create `traffic-control/src/orchestrator.ts`:
 
 ```typescript
 import { createSupabaseClient } from './db/client.js';
@@ -1317,7 +1317,7 @@ Expected: PASS
 
 **Step 5: Update main entry point**
 
-Update `trafficControl/src/index.ts`:
+Update `traffic-control/src/index.ts`:
 
 ```typescript
 import 'dotenv/config';
@@ -1347,7 +1347,7 @@ main().catch(err => {
 **Step 6: Commit**
 
 ```bash
-git add trafficControl/src/
+git add traffic-control/src/
 git commit -m "feat(trafficcontrol): add orchestrator with main loop and Slack integration"
 ```
 
@@ -1356,11 +1356,11 @@ git commit -m "feat(trafficcontrol): add orchestrator with main loop and Slack i
 ## Task 7: Integration Test & Manual Verification
 
 **Files:**
-- Create: `trafficControl/src/integration.test.ts`
+- Create: `traffic-control/src/integration.test.ts`
 
 **Step 1: Create integration test**
 
-Create `trafficControl/src/integration.test.ts`:
+Create `traffic-control/src/integration.test.ts`:
 
 ```typescript
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -1440,7 +1440,7 @@ Expected: PASS
 
 **Step 3: Create run instructions**
 
-Create `trafficControl/README.md`:
+Create `traffic-control/README.md`:
 
 ```markdown
 # TrafficControl
@@ -1479,7 +1479,7 @@ Autonomous agent orchestration system for Claude Code.
 **Step 4: Final commit**
 
 ```bash
-git add trafficControl/
+git add traffic-control/
 git commit -m "feat(trafficcontrol): complete Phase 1 foundation implementation"
 ```
 

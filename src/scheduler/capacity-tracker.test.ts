@@ -28,8 +28,8 @@ describe('CapacityTracker', () => {
   describe('configuration', () => {
     it('should use default limits when env vars are not set', () => {
       const config = tracker.getConfig();
-      expect(config.opusSessionLimit).toBe(5);
-      expect(config.sonnetSessionLimit).toBe(10);
+      expect(config.opusSessionLimit).toBe(1);
+      expect(config.sonnetSessionLimit).toBe(2);
     });
 
     it('should use custom limits from env vars', () => {
@@ -63,20 +63,17 @@ describe('CapacityTracker', () => {
     });
 
     it('should return false when at opus capacity', () => {
-      // Reserve all opus slots
-      for (let i = 0; i < 5; i++) {
-        tracker.reserveCapacity('opus', `session-${i}`);
-      }
+      // Reserve all opus slots (default: 1)
+      tracker.reserveCapacity('opus', 'session-0');
 
       expect(tracker.hasCapacity('opus')).toBe(false);
       expect(tracker.hasCapacity('sonnet')).toBe(true);
     });
 
     it('should return false when at sonnet capacity', () => {
-      // Reserve all sonnet slots
-      for (let i = 0; i < 10; i++) {
-        tracker.reserveCapacity('sonnet', `session-${i}`);
-      }
+      // Reserve all sonnet slots (default: 2)
+      tracker.reserveCapacity('sonnet', 'session-0');
+      tracker.reserveCapacity('sonnet', 'session-1');
 
       expect(tracker.hasCapacity('opus')).toBe(true);
       expect(tracker.hasCapacity('sonnet')).toBe(false);
@@ -85,10 +82,9 @@ describe('CapacityTracker', () => {
     it('should handle haiku model (uses sonnet capacity)', () => {
       expect(tracker.hasCapacity('haiku')).toBe(true);
 
-      // Fill sonnet capacity
-      for (let i = 0; i < 10; i++) {
-        tracker.reserveCapacity('sonnet', `session-${i}`);
-      }
+      // Fill sonnet capacity (default: 2)
+      tracker.reserveCapacity('sonnet', 'session-0');
+      tracker.reserveCapacity('sonnet', 'session-1');
 
       expect(tracker.hasCapacity('haiku')).toBe(false);
     });
@@ -108,14 +104,12 @@ describe('CapacityTracker', () => {
     });
 
     it('should fail to reserve when at capacity', () => {
-      // Fill opus capacity
-      for (let i = 0; i < 5; i++) {
-        tracker.reserveCapacity('opus', `session-${i}`);
-      }
+      // Fill opus capacity (default: 1)
+      tracker.reserveCapacity('opus', 'session-0');
 
       const result = tracker.reserveCapacity('opus', 'session-overflow');
       expect(result).toBe(false);
-      expect(tracker.getCurrentSessionCount('opus')).toBe(5);
+      expect(tracker.getCurrentSessionCount('opus')).toBe(1);
     });
 
     it('should not double-reserve the same session', () => {
@@ -157,38 +151,37 @@ describe('CapacityTracker', () => {
     });
 
     it('should count opus sessions correctly', () => {
+      // Default limit is 1, so only one can be reserved
       tracker.reserveCapacity('opus', 'session-1');
-      tracker.reserveCapacity('opus', 'session-2');
 
-      expect(tracker.getCurrentSessionCount('opus')).toBe(2);
+      expect(tracker.getCurrentSessionCount('opus')).toBe(1);
     });
 
     it('should count sonnet sessions correctly', () => {
+      // Default limit is 2, so only two can be reserved
       tracker.reserveCapacity('sonnet', 'session-1');
       tracker.reserveCapacity('sonnet', 'session-2');
-      tracker.reserveCapacity('sonnet', 'session-3');
 
-      expect(tracker.getCurrentSessionCount('sonnet')).toBe(3);
+      expect(tracker.getCurrentSessionCount('sonnet')).toBe(2);
     });
   });
 
   describe('getAvailableCapacity', () => {
     it('should return full capacity when no sessions', () => {
-      expect(tracker.getAvailableCapacity('opus')).toBe(5);
-      expect(tracker.getAvailableCapacity('sonnet')).toBe(10);
+      expect(tracker.getAvailableCapacity('opus')).toBe(1);
+      expect(tracker.getAvailableCapacity('sonnet')).toBe(2);
     });
 
     it('should return remaining capacity for opus', () => {
       tracker.reserveCapacity('opus', 'session-1');
-      tracker.reserveCapacity('opus', 'session-2');
 
-      expect(tracker.getAvailableCapacity('opus')).toBe(3);
+      expect(tracker.getAvailableCapacity('opus')).toBe(0);
     });
 
     it('should return remaining capacity for sonnet', () => {
       tracker.reserveCapacity('sonnet', 'session-1');
 
-      expect(tracker.getAvailableCapacity('sonnet')).toBe(9);
+      expect(tracker.getAvailableCapacity('sonnet')).toBe(1);
     });
   });
 
@@ -196,19 +189,18 @@ describe('CapacityTracker', () => {
     it('should return comprehensive stats', () => {
       tracker.reserveCapacity('opus', 'session-1');
       tracker.reserveCapacity('sonnet', 'session-2');
-      tracker.reserveCapacity('sonnet', 'session-3');
 
       const stats = tracker.getCapacityStats();
 
       expect(stats.opus.current).toBe(1);
-      expect(stats.opus.limit).toBe(5);
-      expect(stats.opus.available).toBe(4);
-      expect(stats.opus.utilization).toBeCloseTo(0.2);
+      expect(stats.opus.limit).toBe(1);
+      expect(stats.opus.available).toBe(0);
+      expect(stats.opus.utilization).toBeCloseTo(1.0);
 
-      expect(stats.sonnet.current).toBe(2);
-      expect(stats.sonnet.limit).toBe(10);
-      expect(stats.sonnet.available).toBe(8);
-      expect(stats.sonnet.utilization).toBeCloseTo(0.2);
+      expect(stats.sonnet.current).toBe(1);
+      expect(stats.sonnet.limit).toBe(2);
+      expect(stats.sonnet.available).toBe(1);
+      expect(stats.sonnet.utilization).toBeCloseTo(0.5);
     });
   });
 

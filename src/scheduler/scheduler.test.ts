@@ -22,13 +22,13 @@ vi.mock('./capacity-tracker.js', () => {
     this.reserveCapacity = vi.fn().mockReturnValue(true);
     this.releaseCapacity = vi.fn();
     this.getCapacityStats = vi.fn().mockReturnValue({
-      opus: { current: 0, limit: 5, available: 5, utilization: 0 },
-      sonnet: { current: 0, limit: 10, available: 10, utilization: 0 },
+      opus: { current: 0, limit: 1, available: 1, utilization: 0 },
+      sonnet: { current: 0, limit: 2, available: 2, utilization: 0 },
     });
     this.syncWithAgentManager = vi.fn();
     this.getConfig = vi.fn().mockReturnValue({
-      opusSessionLimit: 5,
-      sonnetSessionLimit: 10,
+      opusSessionLimit: 1,
+      sonnetSessionLimit: 2,
     });
   });
   return { CapacityTracker: MockCapacityTracker };
@@ -76,6 +76,10 @@ function createMockTask(overrides: Partial<Task> = {}): Task {
     // Timestamps
     started_at: null,
     completed_at: null,
+    // Priority confirmation
+    priority_confirmed: false,
+    priority_confirmed_at: null,
+    priority_confirmed_by: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
@@ -302,15 +306,15 @@ describe('Scheduler', () => {
     it('should return scheduler statistics', () => {
       vi.mocked(mockTaskQueue.size).mockReturnValue(5);
       vi.mocked(mockCapacityTracker.getCapacityStats).mockReturnValue({
-        opus: { current: 2, limit: 5, available: 3, utilization: 0.4 },
-        sonnet: { current: 5, limit: 10, available: 5, utilization: 0.5 },
+        opus: { current: 1, limit: 1, available: 0, utilization: 1.0 },
+        sonnet: { current: 2, limit: 2, available: 0, utilization: 1.0 },
       });
 
       const stats = scheduler.getStats();
 
       expect(stats.queuedTasks).toBe(5);
-      expect(stats.capacity.opus.current).toBe(2);
-      expect(stats.capacity.sonnet.current).toBe(5);
+      expect(stats.capacity.opus.current).toBe(1);
+      expect(stats.capacity.sonnet.current).toBe(2);
     });
   });
 

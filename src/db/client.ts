@@ -1,4 +1,8 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+export type { SupabaseClient } from '@supabase/supabase-js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('Database');
 
 let client: SupabaseClient | null = null;
 
@@ -14,10 +18,15 @@ export function createSupabaseClient(): SupabaseClient {
   const key = process.env.SUPABASE_SERVICE_KEY;
 
   if (!url || !key) {
+    log.error('Missing required environment variables', {
+      hasUrl: !!url,
+      hasKey: !!key
+    });
     throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY environment variables');
   }
 
   client = createClient(url, key);
+  log.info('Supabase client created successfully');
   return client;
 }
 
@@ -26,6 +35,7 @@ export function createSupabaseClient(): SupabaseClient {
  */
 export function resetClient(): void {
   client = null;
+  log.debug('Supabase client reset');
 }
 
 /**
@@ -34,6 +44,7 @@ export function resetClient(): void {
  * but fails on actual connection errors.
  */
 export async function testConnection(): Promise<{ success: boolean; error?: string }> {
+  log.time('connection-test');
   try {
     const supabase = createSupabaseClient();
     const { error } = await supabase.from('tc_projects').select('count').limit(1);
@@ -49,14 +60,24 @@ export async function testConnection(): Promise<{ success: boolean; error?: stri
         errorMsg.includes('schema cache');
 
       if (!isTableNotFound) {
+        log.timeEnd('connection-test', { success: false });
+        log.error('Database connection test failed', { error: error.message });
         return { success: false, error: error.message };
       }
+      // Table not found is okay - means connection works but schema not applied
+      log.debug('Connection test: schema not applied yet', { error: error.message });
     }
 
+    log.timeEnd('connection-test', { success: true });
+    log.info('Database connection test passed');
     return { success: true };
   } catch (err) {
+    log.timeEnd('connection-test', { success: false });
     // Properly handle different error types
     const errorMessage = err instanceof Error ? err.message : String(err);
+    log.error('Database connection test threw exception', err instanceof Error ? err : undefined, {
+      error: errorMessage
+    });
     return { success: false, error: errorMessage };
   }
 }
@@ -92,6 +113,7 @@ const DEFAULT_HEALTH_CHECK_TIMEOUT_MS = 5000;
  */
 export async function checkHealth(timeoutMs: number = DEFAULT_HEALTH_CHECK_TIMEOUT_MS): Promise<HealthCheckResult> {
   const startTime = Date.now();
+  log.time('health-check');
 
   try {
     const supabase = createSupabaseClient();
@@ -108,6 +130,7 @@ export async function checkHealth(timeoutMs: number = DEFAULT_HEALTH_CHECK_TIMEO
     const { error } = await Promise.race([queryPromise, timeoutPromise]);
 
     const latencyMs = Date.now() - startTime;
+    log.timeEnd('health-check', { latencyMs });
 
     if (error) {
       // Check if it's a "table not found" error - that means DB is reachable but schema not applied
@@ -120,16 +143,21 @@ export async function checkHealth(timeoutMs: number = DEFAULT_HEALTH_CHECK_TIMEO
 
       if (isTableNotFound) {
         // Database is reachable, just schema issue
+        log.debug('Health check passed (schema not applied)', { latencyMs });
         return { healthy: true, latencyMs };
       }
 
+      log.warn('Health check failed', { latencyMs, error: error.message });
       return { healthy: false, latencyMs, error: error.message };
     }
 
+    log.info('Database health check passed', { latencyMs });
     return { healthy: true, latencyMs };
   } catch (err) {
     const latencyMs = Date.now() - startTime;
+    log.timeEnd('health-check', { latencyMs, success: false });
     const errorMessage = err instanceof Error ? err.message : String(err);
+    log.error('Health check threw exception', err instanceof Error ? err : undefined, { latencyMs });
     return { healthy: false, latencyMs, error: errorMessage };
   }
 }
@@ -182,21 +210,37 @@ export async function waitForHealthy(
 ): Promise<HealthCheckResult> {
   let lastResult: HealthCheckResult = { healthy: false, latencyMs: 0, error: 'No attempts made' };
 
+  log.info('Waiting for database to become healthy', { maxRetries: config.maxRetries });
+
   for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
     lastResult = await checkHealth();
 
     if (lastResult.healthy) {
+      if (attempt > 0) {
+        log.info('Database connection recovered', { attempts: attempt + 1, latencyMs: lastResult.latencyMs });
+      }
       return lastResult;
     }
 
     if (attempt < config.maxRetries) {
       const delay = calculateRetryDelay(attempt, config);
+      log.warn('Database health check failed, retrying', {
+        attempt: attempt + 1,
+        maxRetries: config.maxRetries,
+        delayMs: delay,
+        error: lastResult.error
+      });
       if (onRetry) {
         onRetry(attempt + 1, delay, lastResult.error);
       }
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
+
+  log.error('Database failed to become healthy after all retries', {
+    attempts: config.maxRetries + 1,
+    lastError: lastResult.error
+  });
 
   return lastResult;
 }

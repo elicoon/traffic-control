@@ -56,4 +56,32 @@ Before starting work, consult [CAPABILITIES.md](./CAPABILITIES.md) to choose the
 Rules extracted from retrospectives will be added below:
 
 <!-- AGENT_RULES_START -->
+
+### Verification and Completion (from 2026-01-26-premature-completion-claim.md)
+
+1. **Never claim "it's ready" without verification**
+   - "No errors" during compilation or startup does NOT mean the system is working
+   - Silent failures are common in distributed systems
+   - Always run or instruct running a smoke test before declaring completion
+
+2. **Verify end-to-end functionality before claiming completion**
+   - For TrafficControl: Check that agents spawn, Slack responds, and main loop processes tasks
+   - For code changes: Run the affected functionality to ensure it works as expected
+   - Use database queries or logs to verify actual state, not assumptions
+
+3. **Define "done" criteria before starting work**
+   - Before implementing a fix, establish what "working" looks like
+   - Create specific, testable acceptance criteria
+   - Document the verification steps you'll use
+
+4. **The user should not be the first to discover failures**
+   - Your job is to catch issues before the user encounters them
+   - Test the changes yourself before reporting completion
+   - If you can't test directly, provide explicit verification instructions
+
+5. **Compilation success ≠ Runtime success**
+   - TypeScript compiling cleanly says nothing about runtime behavior
+   - Database connections, API calls, and integrations can fail silently
+   - Always verify the actual execution path, not just syntax
+
 <!-- AGENT_RULES_END -->
