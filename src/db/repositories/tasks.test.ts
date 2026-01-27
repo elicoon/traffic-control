@@ -2,23 +2,31 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { TaskRepository } from './tasks.js';
 import { ProjectRepository } from './projects.js';
 import { createSupabaseClient } from '../client.js';
+import { TEST_PREFIX, deleteTasksByIds } from '../test-cleanup.js';
 
 describe('TaskRepository', () => {
   let taskRepo: TaskRepository;
   let projectRepo: ProjectRepository;
   let testProjectId: string;
   let testTaskId: string;
+  const createdTaskIds: string[] = [];
 
   beforeAll(async () => {
     const client = createSupabaseClient();
     taskRepo = new TaskRepository(client);
     projectRepo = new ProjectRepository(client);
 
-    const project = await projectRepo.create({ name: 'Task Test Project' });
+    // Use TEST_PREFIX for easy identification during cleanup
+    const project = await projectRepo.create({ name: `${TEST_PREFIX}TaskRepository_Project` });
     testProjectId = project.id;
   });
 
   afterAll(async () => {
+    // Clean up all created tasks
+    if (createdTaskIds.length > 0) {
+      await deleteTasksByIds(createdTaskIds);
+    }
+    // Clean up test project
     if (testProjectId) {
       await projectRepo.delete(testProjectId);
     }
@@ -27,14 +35,15 @@ describe('TaskRepository', () => {
   it('should create a task', async () => {
     const task = await taskRepo.create({
       project_id: testProjectId,
-      title: 'Test Task',
+      title: `${TEST_PREFIX}TaskRepo_CreateTask`,
       description: 'A test task',
       priority: 1,
       estimated_sessions_opus: 1
     });
 
     testTaskId = task.id;
-    expect(task.title).toBe('Test Task');
+    createdTaskIds.push(task.id);
+    expect(task.title).toBe(`${TEST_PREFIX}TaskRepo_CreateTask`);
     expect(task.status).toBe('queued');
     expect(task.project_id).toBe(testProjectId);
   });
@@ -42,7 +51,7 @@ describe('TaskRepository', () => {
   it('should get a task by id', async () => {
     const task = await taskRepo.getById(testTaskId);
     expect(task).toBeDefined();
-    expect(task?.title).toBe('Test Task');
+    expect(task?.title).toBe(`${TEST_PREFIX}TaskRepo_CreateTask`);
   });
 
   it('should get queued tasks', async () => {

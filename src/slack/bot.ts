@@ -1,4 +1,7 @@
 import { App, LogLevel } from '@slack/bolt';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('Slack.Bot');
 
 let app: App | null = null;
 
@@ -255,18 +258,24 @@ export async function sendMessage(
       },
       retryConfig,
       (error, attempt, delayMs) => {
-        console.warn(
-          `Slack message send attempt ${attempt} failed: ${error.message}. ` +
-          `Retrying in ${delayMs}ms...`
-        );
+        log.warn('Slack message send failed, retrying', {
+          attempt,
+          delayMs,
+          error: error.message,
+          channel: message.channel,
+          threadTs: message.thread_ts
+        });
       }
     );
 
     return result;
   } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error(`Failed to send Slack message after retries: ${errorMessage}`);
-    throw new Error(`Failed to send Slack message: ${errorMessage}`);
+    const error = err instanceof Error ? err : new Error(String(err));
+    log.error('Failed to send Slack message after retries', error, {
+      channel: message.channel,
+      threadTs: message.thread_ts
+    });
+    throw new Error(`Failed to send Slack message: ${error.message}`);
   }
 }
 
@@ -275,8 +284,9 @@ export async function sendMessage(
  */
 export async function startBot(): Promise<void> {
   const bot = createSlackBot();
+  log.info('Starting Slack bot in socket mode');
   await bot.start();
-  console.log('Slack bot is running');
+  log.info('Slack bot is running');
 }
 
 /**

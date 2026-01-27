@@ -91,11 +91,13 @@ export class ConfigValidationError extends Error {
 
 /**
  * Default configuration values
+ * NOTE: Capacity limits are conservative by default (1 opus, 2 sonnet) to prevent
+ * runaway agent spawning. Increase only after understanding cost implications.
  */
 const DEFAULTS: Partial<TrafficControlConfig> = {
   maxConcurrentAgents: 3,
-  opusSessionLimit: 50,
-  sonnetSessionLimit: 100,
+  opusSessionLimit: 1,
+  sonnetSessionLimit: 2,
   pollIntervalMs: 5000,
   reportIntervalMs: 43200000, // 12 hours
   learningsPath: './learnings',

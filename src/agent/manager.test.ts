@@ -117,7 +117,7 @@ describe('AgentManager', () => {
         cwd: '/project/path',
         model: 'opus',
         maxTurns: 20,
-        permissionMode: 'default',
+        permissionMode: 'bypassPermissions',
       }),
       expect.any(Function) // onMessage callback
     );

@@ -1,5 +1,8 @@
 import { SlackMessage, formatQuestion, formatBlocker, formatVisualReview } from './bot.js';
 import { ThreadTracker, SlackThread } from './thread-tracker.js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('Slack.Router');
 
 /**
  * Configuration for the Slack router.
@@ -84,6 +87,13 @@ export class SlackRouter {
     projectName: string,
     question: string
   ): Promise<string> {
+    log.debug('Routing question to Slack', {
+      agentId,
+      taskId,
+      projectName,
+      questionLength: question.length
+    });
+
     const text = formatQuestion(projectName, question) + '\n_(Reply in thread to respond)_';
 
     const message: SlackMessage = {
@@ -91,9 +101,16 @@ export class SlackRouter {
       text
     };
 
+    log.time(`route-question-${taskId}`);
     const threadTs = await this.sendMessage(message);
+    log.timeEnd(`route-question-${taskId}`, { taskId, agentId });
 
     if (!threadTs) {
+      log.error('Failed to route question - no thread timestamp returned', undefined, {
+        agentId,
+        taskId,
+        projectName
+      });
       throw new Error('Failed to send message - no thread timestamp returned');
     }
 
@@ -104,6 +121,13 @@ export class SlackRouter {
       projectName,
       agentId,
       status: 'waiting_response'
+    });
+
+    log.debug('Thread created for question', {
+      threadTs,
+      taskId,
+      agentId,
+      projectName
     });
 
     return threadTs;
@@ -119,6 +143,13 @@ export class SlackRouter {
     projectName: string,
     reason: string
   ): Promise<string> {
+    log.debug('Routing blocker to Slack', {
+      agentId,
+      taskId,
+      projectName,
+      reasonLength: reason.length
+    });
+
     const text = formatBlocker(projectName, reason) + '\n_(Reply "skip" to move to next task, or provide guidance)_';
 
     const message: SlackMessage = {
@@ -126,9 +157,16 @@ export class SlackRouter {
       text
     };
 
+    log.time(`route-blocker-${taskId}`);
     const threadTs = await this.sendMessage(message);
+    log.timeEnd(`route-blocker-${taskId}`, { taskId, agentId });
 
     if (!threadTs) {
+      log.error('Failed to route blocker - no thread timestamp returned', undefined, {
+        agentId,
+        taskId,
+        projectName
+      });
       throw new Error('Failed to send message - no thread timestamp returned');
     }
 
@@ -139,6 +177,13 @@ export class SlackRouter {
       projectName,
       agentId,
       status: 'waiting_response'
+    });
+
+    log.debug('Thread created for blocker', {
+      threadTs,
+      taskId,
+      agentId,
+      projectName
     });
 
     return threadTs;
@@ -154,9 +199,17 @@ export class SlackRouter {
     projectName: string,
     screenshot: Buffer
   ): Promise<string> {
+    log.debug('Routing visual review to Slack', {
+      agentId,
+      taskId,
+      projectName,
+      screenshotSize: screenshot.length
+    });
+
     const comment = formatVisualReview(projectName, taskId) +
       '\n_(React with tick to approve, X + reply with feedback to reject)_';
 
+    log.time(`route-visual-review-${taskId}`);
     const uploadResult = await this.uploadFile({
       channels: this.config.channelId,
       file: screenshot,
@@ -164,6 +217,7 @@ export class SlackRouter {
       title: `Visual Review - ${projectName}`,
       initial_comment: comment
     });
+    log.timeEnd(`route-visual-review-${taskId}`, { taskId, agentId });
 
     // For simplicity, we use the file ID as the thread identifier
     // In a real implementation, we'd get the message timestamp from the upload response
@@ -178,6 +232,13 @@ export class SlackRouter {
       status: 'waiting_response'
     });
 
+    log.debug('Thread created for visual review', {
+      threadTs,
+      taskId,
+      agentId,
+      projectName
+    });
+
     return threadTs;
   }
 
@@ -190,6 +251,13 @@ export class SlackRouter {
     projectName: string,
     summary: string
   ): Promise<void> {
+    log.debug('Routing completion to Slack', {
+      agentId,
+      taskId,
+      projectName,
+      summaryLength: summary.length
+    });
+
     const text = `*[${projectName}]* Task complete:\n\n${summary}`;
 
     // Check if there's an existing thread for this task
@@ -201,11 +269,17 @@ export class SlackRouter {
       thread_ts: existingThread?.threadTs
     };
 
+    log.time(`route-completion-${taskId}`);
     await this.sendMessage(message);
+    log.timeEnd(`route-completion-${taskId}`, { taskId, agentId });
 
     // Mark thread as resolved if it exists
     if (existingThread) {
       this.threadTracker.resolveThread(existingThread.threadTs);
+      log.debug('Thread resolved for completed task', {
+        threadTs: existingThread.threadTs,
+        taskId
+      });
     }
   }
 
@@ -220,9 +294,19 @@ export class SlackRouter {
     const thread = this.threadTracker.getByThreadTs(threadTs);
 
     if (!thread) {
-      // Unknown thread, ignore
+      log.debug('Response received for unknown thread, ignoring', {
+        threadTs,
+        userId
+      });
       return;
     }
+
+    log.debug('Processing user response', {
+      threadTs,
+      userId,
+      taskId: thread.taskId,
+      textLength: text.length
+    });
 
     // Add message to thread
     this.threadTracker.addMessageToThread(threadTs, {
@@ -245,6 +329,13 @@ export class SlackRouter {
       isSkip
     };
 
+    log.debug('Notifying response handlers', {
+      threadTs,
+      taskId: thread.taskId,
+      handlerCount: this.responseHandlers.length,
+      isSkip
+    });
+
     // Notify all handlers
     for (const handler of this.responseHandlers) {
       await handler(responseData);
@@ -262,7 +353,11 @@ export class SlackRouter {
     const thread = this.threadTracker.getByThreadTs(messageTs);
 
     if (!thread) {
-      // Unknown thread, ignore
+      log.debug('Reaction received for unknown thread, ignoring', {
+        messageTs,
+        userId,
+        reaction
+      });
       return;
     }
 
@@ -271,8 +366,22 @@ export class SlackRouter {
     const isRejection = reaction === 'x';
 
     if (!isApproval && !isRejection) {
+      log.debug('Ignoring non-approval/rejection reaction', {
+        reaction,
+        messageTs,
+        taskId: thread.taskId
+      });
       return;
     }
+
+    log.debug('Processing reaction', {
+      reaction,
+      userId,
+      messageTs,
+      taskId: thread.taskId,
+      isApproval,
+      isRejection
+    });
 
     // Build response data
     const responseData: ResponseData = {
@@ -332,6 +441,7 @@ export class SlackRouter {
    * Clears all tracked threads.
    */
   clearThreads(): void {
+    log.debug('Clearing all tracked threads');
     this.threadTracker.clear();
   }
 }

@@ -1,4 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { logger } from '../../logging/index.js';
+
+const log = logger.child('Database.UsageLogRepo');
 
 /**
  * Usage log entry from the database
@@ -58,6 +61,7 @@ export class UsageLogRepository {
    * Create a new usage log entry
    */
   async create(input: CreateUsageLogInput): Promise<UsageLog> {
+    log.time('create-usage-log');
     const { data, error } = await this.client
       .from('tc_usage_log')
       .insert({
@@ -74,7 +78,13 @@ export class UsageLogRepository {
       .select()
       .single();
 
-    if (error) throw new Error(`Failed to create usage log: ${error.message}`);
+    log.timeEnd('create-usage-log', { table: 'tc_usage_log', operation: 'insert' });
+
+    if (error) {
+      log.error('Failed to create usage log', { operation: 'insert', table: 'tc_usage_log', error: error.message });
+      throw new Error(`Failed to create usage log: ${error.message}`);
+    }
+    log.debug('Usage log created', { sessionId: input.session_id, model: input.model, totalTokens: input.input_tokens + input.output_tokens });
     return data as UsageLog;
   }
 
@@ -82,13 +92,20 @@ export class UsageLogRepository {
    * Get usage logs by session ID
    */
   async getBySessionId(sessionId: string): Promise<UsageLog[]> {
+    log.time('get-usage-by-session');
     const { data, error } = await this.client
       .from('tc_usage_log')
       .select()
       .eq('session_id', sessionId)
       .order('created_at', { ascending: true });
 
-    if (error) throw new Error(`Failed to get usage logs: ${error.message}`);
+    log.timeEnd('get-usage-by-session', { table: 'tc_usage_log', operation: 'select', sessionId, rowCount: data?.length });
+
+    if (error) {
+      log.error('Failed to get usage logs by session', { operation: 'select', table: 'tc_usage_log', sessionId, error: error.message });
+      throw new Error(`Failed to get usage logs: ${error.message}`);
+    }
+    log.debug('Usage logs by session fetched', { sessionId, count: data.length });
     return data as UsageLog[];
   }
 
@@ -96,13 +113,20 @@ export class UsageLogRepository {
    * Get usage logs by task ID
    */
   async getByTaskId(taskId: string): Promise<UsageLog[]> {
+    log.time('get-usage-by-task');
     const { data, error } = await this.client
       .from('tc_usage_log')
       .select()
       .eq('task_id', taskId)
       .order('created_at', { ascending: true });
 
-    if (error) throw new Error(`Failed to get usage logs: ${error.message}`);
+    log.timeEnd('get-usage-by-task', { table: 'tc_usage_log', operation: 'select', taskId, rowCount: data?.length });
+
+    if (error) {
+      log.error('Failed to get usage logs by task', { operation: 'select', table: 'tc_usage_log', taskId, error: error.message });
+      throw new Error(`Failed to get usage logs: ${error.message}`);
+    }
+    log.debug('Usage logs by task fetched', { taskId, count: data.length });
     return data as UsageLog[];
   }
 
@@ -134,6 +158,7 @@ export class UsageLogRepository {
    * Get aggregated usage statistics for a time range
    */
   async getStats(startDate?: Date, endDate?: Date): Promise<UsageStats> {
+    log.time('get-usage-stats');
     let query = this.client.from('tc_usage_log').select('*');
 
     if (startDate) {
@@ -145,7 +170,12 @@ export class UsageLogRepository {
 
     const { data, error } = await query;
 
-    if (error) throw new Error(`Failed to get usage stats: ${error.message}`);
+    log.timeEnd('get-usage-stats', { table: 'tc_usage_log', operation: 'select', rowCount: data?.length });
+
+    if (error) {
+      log.error('Failed to get usage stats', { operation: 'select', table: 'tc_usage_log', error: error.message });
+      throw new Error(`Failed to get usage stats: ${error.message}`);
+    }
 
     const logs = data as UsageLog[];
 
@@ -171,18 +201,18 @@ export class UsageLogRepository {
     };
 
     // Aggregate
-    for (const log of logs) {
-      const tokens = log.input_tokens + log.output_tokens;
+    for (const logEntry of logs) {
+      const tokens = logEntry.input_tokens + logEntry.output_tokens;
 
-      stats.total_input_tokens += log.input_tokens;
-      stats.total_output_tokens += log.output_tokens;
+      stats.total_input_tokens += logEntry.input_tokens;
+      stats.total_output_tokens += logEntry.output_tokens;
       stats.total_tokens += tokens;
-      stats.total_cost_usd += log.cost_usd;
+      stats.total_cost_usd += logEntry.cost_usd;
 
-      if (log.model in stats.by_model) {
-        stats.by_model[log.model].tokens += tokens;
-        stats.by_model[log.model].cost += log.cost_usd;
-        sessionsByModel[log.model].add(log.session_id);
+      if (logEntry.model in stats.by_model) {
+        stats.by_model[logEntry.model].tokens += tokens;
+        stats.by_model[logEntry.model].cost += logEntry.cost_usd;
+        sessionsByModel[logEntry.model].add(logEntry.session_id);
       }
     }
 
@@ -191,6 +221,7 @@ export class UsageLogRepository {
     stats.by_model.sonnet.sessions = sessionsByModel.sonnet.size;
     stats.by_model.haiku.sessions = sessionsByModel.haiku.size;
 
+    log.debug('Usage stats computed', { totalTokens: stats.total_tokens, sessionCount: stats.session_count });
     return stats;
   }
 
@@ -198,13 +229,20 @@ export class UsageLogRepository {
    * Get recent usage logs with pagination
    */
   async getRecent(limit: number = 100, offset: number = 0): Promise<UsageLog[]> {
+    log.time('get-recent-usage-logs');
     const { data, error } = await this.client
       .from('tc_usage_log')
       .select()
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (error) throw new Error(`Failed to get recent usage logs: ${error.message}`);
+    log.timeEnd('get-recent-usage-logs', { table: 'tc_usage_log', operation: 'select', limit, offset, rowCount: data?.length });
+
+    if (error) {
+      log.error('Failed to get recent usage logs', { operation: 'select', table: 'tc_usage_log', limit, offset, error: error.message });
+      throw new Error(`Failed to get recent usage logs: ${error.message}`);
+    }
+    log.debug('Recent usage logs fetched', { count: data.length, limit, offset });
     return data as UsageLog[];
   }
 
@@ -212,14 +250,22 @@ export class UsageLogRepository {
    * Delete usage logs older than a specified date
    */
   async deleteOlderThan(date: Date): Promise<number> {
+    log.time('delete-old-usage-logs');
     const { data, error } = await this.client
       .from('tc_usage_log')
       .delete()
       .lt('created_at', date.toISOString())
       .select('id');
 
-    if (error) throw new Error(`Failed to delete old usage logs: ${error.message}`);
-    return (data as { id: string }[]).length;
+    log.timeEnd('delete-old-usage-logs', { table: 'tc_usage_log', operation: 'delete', beforeDate: date.toISOString() });
+
+    if (error) {
+      log.error('Failed to delete old usage logs', { operation: 'delete', table: 'tc_usage_log', beforeDate: date.toISOString(), error: error.message });
+      throw new Error(`Failed to delete old usage logs: ${error.message}`);
+    }
+    const deletedCount = (data as { id: string }[]).length;
+    log.info('Old usage logs deleted', { deletedCount, beforeDate: date.toISOString() });
+    return deletedCount;
   }
 
   /**
@@ -229,6 +275,7 @@ export class UsageLogRepository {
     startDate: Date,
     endDate: Date
   ): Promise<Array<{ date: string; tokens: number; cost: number; sessions: number }>> {
+    log.time('get-daily-summary');
     const { data, error } = await this.client
       .from('tc_usage_log')
       .select('*')
@@ -236,30 +283,37 @@ export class UsageLogRepository {
       .lte('created_at', endDate.toISOString())
       .order('created_at', { ascending: true });
 
-    if (error) throw new Error(`Failed to get daily summary: ${error.message}`);
+    log.timeEnd('get-daily-summary', { table: 'tc_usage_log', operation: 'select', rowCount: data?.length });
+
+    if (error) {
+      log.error('Failed to get daily summary', { operation: 'select', table: 'tc_usage_log', error: error.message });
+      throw new Error(`Failed to get daily summary: ${error.message}`);
+    }
 
     const logs = data as UsageLog[];
 
     // Group by date
     const byDate = new Map<string, { tokens: number; cost: number; sessions: Set<string> }>();
 
-    for (const log of logs) {
-      const date = log.created_at.split('T')[0];
+    for (const logEntry of logs) {
+      const date = logEntry.created_at.split('T')[0];
       const existing = byDate.get(date) || { tokens: 0, cost: 0, sessions: new Set<string>() };
 
-      existing.tokens += log.input_tokens + log.output_tokens;
-      existing.cost += log.cost_usd;
-      existing.sessions.add(log.session_id);
+      existing.tokens += logEntry.input_tokens + logEntry.output_tokens;
+      existing.cost += logEntry.cost_usd;
+      existing.sessions.add(logEntry.session_id);
 
       byDate.set(date, existing);
     }
 
     // Convert to array
-    return Array.from(byDate.entries()).map(([date, data]) => ({
+    const result = Array.from(byDate.entries()).map(([date, dateData]) => ({
       date,
-      tokens: data.tokens,
-      cost: data.cost,
-      sessions: data.sessions.size,
+      tokens: dateData.tokens,
+      cost: dateData.cost,
+      sessions: dateData.sessions.size,
     }));
+    log.debug('Daily summary computed', { daysCount: result.length });
+    return result;
   }
 }

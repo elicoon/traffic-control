@@ -1,3 +1,7 @@
+import { logger } from '../logging/index.js';
+
+const log = logger.child('EventDispatcher');
+
 /**
  * Supported event types in the orchestration system
  */
@@ -80,6 +84,8 @@ export class EventDispatcher {
     handlers.push(handler);
     this.handlers.set(type, handlers);
 
+    log.debug('Handler registered', { eventType: type, totalHandlers: handlers.length });
+
     // Return unsubscribe function
     return () => {
       this.off(type, handler);
@@ -136,12 +142,17 @@ export class EventDispatcher {
    * Dispatches an event to all registered handlers
    */
   async dispatch(event: AgentEvent): Promise<void> {
+    log.time(`dispatch-${event.type}`);
     // Add to history
     this.addToHistory(event);
 
-    // Log if enabled
+    // Log event dispatch
     if (this.config.enableLogging) {
-      console.log(`[EventDispatcher] Dispatching ${event.type} event:`, event);
+      log.debug('Dispatching event', {
+        type: event.type,
+        agentId: event.agentId,
+        taskId: event.taskId,
+      });
     }
 
     // Get type-specific handlers
@@ -156,6 +167,12 @@ export class EventDispatcher {
     for (const handler of this.globalHandlers) {
       await this.safeCallHandler(handler, event);
     }
+
+    log.timeEnd(`dispatch-${event.type}`, {
+      agentId: event.agentId,
+      typeHandlers: typeHandlers.length,
+      globalHandlers: this.globalHandlers.length,
+    });
   }
 
   /**
@@ -178,9 +195,12 @@ export class EventDispatcher {
   ): Promise<AgentEvent> {
     const timeoutMs = options.timeoutMs ?? 30000;
 
+    log.debug('Waiting for event', { eventType: type, timeoutMs, filter });
+
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         this.off(type, handler);
+        log.warn('Timeout waiting for event', { eventType: type, timeoutMs, filter });
         reject(new Error(`Timeout waiting for event: ${type}`));
       }, timeoutMs);
 
@@ -266,7 +286,11 @@ export class EventDispatcher {
     try {
       await handler(event);
     } catch (error) {
-      console.error('[EventDispatcher] Handler error:', error);
+      log.error('Handler error', error instanceof Error ? error : new Error(String(error)), {
+        eventType: event.type,
+        agentId: event.agentId,
+        taskId: event.taskId,
+      });
       // Error isolation - don't rethrow, continue to other handlers
     }
   }

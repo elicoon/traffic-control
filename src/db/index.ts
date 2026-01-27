@@ -21,3 +21,18 @@ export type {
   UpdateTaskInput,
   RecordUsageInput,
 } from './repositories/index.js';
+
+// Test cleanup utilities
+export {
+  TEST_PREFIX,
+  isTestTask,
+  isTestTitle,
+  cleanTestData,
+  getTestTaskCount,
+  getTestTaskIds,
+  checkForTestData,
+  deleteTasksByIds,
+  runCleanup,
+} from './test-cleanup.js';
+
+export type { CleanupResult } from './test-cleanup.js';

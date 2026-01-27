@@ -1,11 +1,13 @@
-import { createSupabaseClient } from './db/client.js';
+import { createSupabaseClient, SupabaseClient } from './db/client.js';
 import { ProjectRepository, Project } from './db/repositories/projects.js';
 import { TaskRepository, Task } from './db/repositories/tasks.js';
 import { AgentManager } from './agent/manager.js';
 import { Scheduler, ModelType } from './scheduler/index.js';
 import { sendMessage, formatQuestion, startBot } from './slack/bot.js';
 import { setMessageHandler, setupHandlers } from './slack/handlers.js';
-import { ContextBudgetManager, ContextEntry, DelegationMetricsManager } from './orchestrator/index.js';
+import { ContextBudgetManager, ContextEntry, DelegationMetricsManager, PreFlightChecker, createPreFlightChecker } from './orchestrator/index.js';
+import { DashboardServer } from './dashboard/index.js';
+import { MetricsCollector, RecommendationEngine } from './reporter/index.js';
 
 interface PendingQuestion {
   sessionId: string;
@@ -18,24 +20,35 @@ interface PendingQuestion {
 
 export class Orchestrator {
   private running = false;
+  private confirmed = false;
+  private supabaseClient: SupabaseClient;
   private projectRepo: ProjectRepository;
   private taskRepo: TaskRepository;
   private agentManager: AgentManager;
   private scheduler: Scheduler;
   private contextBudget: ContextBudgetManager;
   private delegationMetrics: DelegationMetricsManager;
+  private preFlightChecker: PreFlightChecker;
   private pendingQuestions: Map<string, PendingQuestion> = new Map();
   private slackChannel: string;
+  private dashboardServer: DashboardServer | null = null;
+  private metricsCollector: MetricsCollector;
+  private recommendationEngine: RecommendationEngine;
 
   constructor() {
-    const client = createSupabaseClient();
-    this.projectRepo = new ProjectRepository(client);
-    this.taskRepo = new TaskRepository(client);
+    this.supabaseClient = createSupabaseClient();
+    this.projectRepo = new ProjectRepository(this.supabaseClient);
+    this.taskRepo = new TaskRepository(this.supabaseClient);
     this.agentManager = new AgentManager();
     this.scheduler = new Scheduler({ agentManager: this.agentManager });
     this.contextBudget = new ContextBudgetManager();
     this.delegationMetrics = new DelegationMetricsManager();
     this.slackChannel = process.env.SLACK_CHANNEL || 'trafficcontrol';
+    this.metricsCollector = new MetricsCollector(this.supabaseClient);
+    this.recommendationEngine = new RecommendationEngine();
+    this.preFlightChecker = createPreFlightChecker(this.supabaseClient, {
+      slackChannelId: this.slackChannel,
+    });
 
     this.setupEventHandlers();
   }
@@ -124,16 +137,86 @@ export class Orchestrator {
       }
     });
 
-    // Handle Slack replies
+    // Handle Slack replies and @mentions
     setMessageHandler(async (text, userId, threadTs) => {
-      // Find pending question by thread
+      const lowerText = text.toLowerCase().trim();
+
+      // Check for pre-flight confirmation commands
+      const confirmationThreadTs = this.preFlightChecker.getConfirmationThreadTs();
+      if (confirmationThreadTs && threadTs === confirmationThreadTs) {
+        if (lowerText === 'confirm' || lowerText === 'yes' || lowerText === 'start') {
+          console.log(`[Orchestrator] Received confirmation from user ${userId}`);
+          this.preFlightChecker.confirm(true);
+          return;
+        } else if (lowerText === 'abort' || lowerText === 'cancel' || lowerText === 'no' || lowerText === 'stop') {
+          console.log(`[Orchestrator] Received abort command from user ${userId}`);
+          this.preFlightChecker.confirm(false);
+          return;
+        }
+      }
+
+      // First, check if this is a reply to a pending question
       for (const [sessionId, pq] of this.pendingQuestions) {
         if (pq.slackThreadTs === threadTs) {
           // Inject response into agent
           await this.agentManager.injectMessage(sessionId, text);
           this.pendingQuestions.delete(sessionId);
-          break;
+          return; // Handled as pending question reply
         }
+      }
+
+      // Fallback: Handle general @mentions with commands
+
+      if (lowerText.includes('status')) {
+        // Respond with status summary
+        const stats = this.getSchedulerStats();
+        const pendingQs = this.getPendingQuestions();
+        const statusText = [
+          '*TrafficControl Status*',
+          '',
+          `Opus: ${stats.capacity.opus.current}/${stats.capacity.opus.limit} active`,
+          `Sonnet: ${stats.capacity.sonnet.current}/${stats.capacity.sonnet.limit} active`,
+          `Pending questions: ${pendingQs.length}`,
+          `Context budget: ${stats.contextWithinBudget ? 'OK' : 'Over limit'}`,
+        ].join('\n');
+
+        await sendMessage({
+          channel: this.slackChannel,
+          text: statusText,
+          thread_ts: threadTs,
+        });
+      } else if (lowerText.includes('tasks') || lowerText.includes('list')) {
+        // Respond with task list
+        const queuedTasks = await this.taskRepo.getQueued();
+        const taskLines = queuedTasks.slice(0, 10).map((t, i) =>
+          `${i + 1}. ${t.title} (priority: ${t.priority ?? 0})`
+        );
+        const taskText = taskLines.length > 0
+          ? `*Queued Tasks (${queuedTasks.length} total)*\n\n${taskLines.join('\n')}${queuedTasks.length > 10 ? '\n_...and more_' : ''}`
+          : '*No queued tasks*';
+
+        await sendMessage({
+          channel: this.slackChannel,
+          text: taskText,
+          thread_ts: threadTs,
+        });
+      } else {
+        // Default help response
+        const helpText = [
+          '*TrafficControl Bot*',
+          '',
+          'Available commands (mention me with):',
+          '- `status` - Show current orchestrator status',
+          '- `tasks` or `list` - Show queued tasks',
+          '',
+          'Or use `/tc help` for slash commands.',
+        ].join('\n');
+
+        await sendMessage({
+          channel: this.slackChannel,
+          text: helpText,
+          thread_ts: threadTs,
+        });
       }
     });
   }
@@ -172,6 +255,75 @@ export class Orchestrator {
     setupHandlers();
     await startBot();
 
+    // Run pre-flight checks BEFORE starting the main loop
+    console.log('\n=== Running Pre-Flight Checks ===\n');
+    try {
+      const preFlightResult = await this.preFlightChecker.runChecks();
+
+      // Send summary to Slack and wait for confirmation
+      await this.preFlightChecker.sendSummaryToSlack();
+
+      console.log(`Pre-flight checks complete: ${preFlightResult.queuedTaskCount} tasks queued`);
+      if (preFlightResult.warnings.length > 0) {
+        console.log(`Warnings: ${preFlightResult.warnings.length}`);
+        for (const w of preFlightResult.warnings) {
+          console.log(`  [${w.severity}] ${w.message}`);
+        }
+      }
+
+      console.log('\nWaiting for confirmation via Slack...');
+      console.log('Reply "confirm" to start or "abort" to cancel.\n');
+
+      // Wait for user to confirm via Slack
+      const confirmed = await this.preFlightChecker.waitForConfirmation();
+
+      if (!confirmed) {
+        console.log('Startup aborted by user or timeout. Exiting.');
+        await sendMessage({
+          channel: this.slackChannel,
+          text: '❌ *Orchestrator startup aborted.* No agents will be spawned.',
+        });
+        return;
+      }
+
+      this.confirmed = true;
+      console.log('Confirmation received! Starting orchestrator...\n');
+
+      await sendMessage({
+        channel: this.slackChannel,
+        text: '✅ *Orchestrator confirmed and starting.* Tasks will now be assigned to agents.',
+      });
+
+    } catch (error) {
+      console.error('Pre-flight checks failed:', error);
+      await sendMessage({
+        channel: this.slackChannel,
+        text: `❌ *Pre-flight checks failed:* ${error instanceof Error ? error.message : String(error)}`,
+      });
+      return;
+    }
+
+    // Start dashboard server if enabled
+    const dashboardEnabled = process.env.DASHBOARD_ENABLED !== 'false';
+    if (dashboardEnabled) {
+      const dashboardPort = parseInt(process.env.DASHBOARD_PORT || '3000', 10);
+      try {
+        this.dashboardServer = new DashboardServer({
+          port: dashboardPort,
+          projectRepo: this.projectRepo,
+          taskRepo: this.taskRepo,
+          metricsCollector: this.metricsCollector,
+          recommendationEngine: this.recommendationEngine,
+          agentManager: this.agentManager,
+          scheduler: this.scheduler,
+        });
+        await this.dashboardServer.start();
+        console.log(`Dashboard available at http://localhost:${dashboardPort}`);
+      } catch (error) {
+        console.error('Failed to start dashboard:', error);
+      }
+    }
+
     // Sync scheduler with any existing agent sessions
     this.scheduler.syncCapacity();
 
@@ -184,6 +336,17 @@ export class Orchestrator {
 
   async stop(): Promise<void> {
     this.running = false;
+
+    // Stop dashboard server if running
+    if (this.dashboardServer) {
+      try {
+        await this.dashboardServer.stop();
+        console.log('Dashboard server stopped');
+      } catch (error) {
+        console.error('Error stopping dashboard:', error);
+      }
+    }
+
     console.log('TrafficControl orchestrator stopped');
   }
 
@@ -261,6 +424,7 @@ export class Orchestrator {
       model,
       projectPath: process.cwd(), // Will be project-specific in later phases
       systemPrompt,
+      maxTurns: 50, // Default max turns to prevent runaway agents
     });
 
     // Record delegation metrics

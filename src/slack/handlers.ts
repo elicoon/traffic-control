@@ -1,6 +1,9 @@
 import { App } from '@slack/bolt';
 import { createSlackBot, ProposalData, formatProposalBatch, formatProposalApproved, formatProposalRejected, formatStatusReport } from './bot.js';
 import { Proposal } from '../db/repositories/proposals.js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('Slack.Handlers');
 
 /**
  * Type for message handler callbacks.
@@ -147,11 +150,19 @@ export function setupHandlers(): void {
     const msg = message as { text?: string; user?: string; thread_ts?: string; ts?: string };
 
     if (msg.text && msg.user && messageCallback) {
+      log.debug('Processing incoming message', {
+        userId: msg.user,
+        threadTs: msg.thread_ts ?? msg.ts,
+        hasText: !!msg.text
+      });
       try {
         await messageCallback(msg.text, msg.user, msg.thread_ts ?? msg.ts);
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        console.error(`Error in message handler: ${errorMessage}`);
+        const error = err instanceof Error ? err : new Error(String(err));
+        log.error('Error in message handler', error, {
+          userId: msg.user,
+          threadTs: msg.thread_ts ?? msg.ts
+        });
       }
     }
   });
@@ -225,9 +236,12 @@ export function setupHandlers(): void {
           );
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error(`Error in command handler: ${errorMessage}`);
-      await respond(`An error occurred while processing your command: ${errorMessage}`);
+      const error = err instanceof Error ? err : new Error(String(err));
+      log.error('Error in command handler', error, {
+        subcommand,
+        userId: command.user_id
+      });
+      await respond(`An error occurred while processing your command: ${error.message}`);
     }
   });
 
@@ -237,14 +251,24 @@ export function setupHandlers(): void {
 
     // Check for approval/rejection reactions
     if (reaction === 'white_check_mark' || reaction === 'x') {
-      console.log(`Reaction ${reaction} from ${user} on message ${item.ts}`);
+      log.debug('Reaction received', {
+        reaction,
+        userId: user,
+        messageTs: item.ts,
+        itemType: item.type
+      });
 
       if (reactionCallback && item.type === 'message') {
         try {
           await reactionCallback(reaction, user, item.ts, item.channel);
         } catch (err) {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          console.error(`Error in reaction handler: ${errorMessage}`);
+          const error = err instanceof Error ? err : new Error(String(err));
+          log.error('Error in reaction handler', error, {
+            reaction,
+            userId: user,
+            messageTs: item.ts,
+            channel: item.channel
+          });
         }
       }
     }
@@ -269,15 +293,22 @@ export function setupHandlers(): void {
         });
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error(`Error in app_mention handler: ${errorMessage}`);
+      const error = err instanceof Error ? err : new Error(String(err));
+      log.error('Error in app_mention handler', error, {
+        userId: user,
+        threadTs: threadContext
+      });
       try {
         await say({
-          text: `An error occurred processing your mention: ${errorMessage}`,
+          text: `An error occurred processing your mention: ${error.message}`,
           thread_ts: threadContext
         });
       } catch (sayErr) {
-        console.error(`Failed to send error message: ${sayErr}`);
+        const sayError = sayErr instanceof Error ? sayErr : new Error(String(sayErr));
+        log.error('Failed to send error message', sayError, {
+          userId: user,
+          threadTs: threadContext
+        });
       }
     }
   });

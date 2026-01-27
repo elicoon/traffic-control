@@ -6,6 +6,9 @@ import {
   ContextEntry,
   ContextEntryInput,
 } from './context-budget.js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('ContextBudgetManager');
 
 /**
  * Default configuration values for context budget management
@@ -80,7 +83,28 @@ export class ContextBudgetManager {
 
     this.entries.set(id, entry);
 
-    return this.getBudget();
+    const budget = this.getBudget();
+    const utilization = this.getCurrentUtilization();
+
+    log.debug('Context entry added', {
+      entryId: id,
+      category: input.category,
+      tokens,
+      totalTokens: budget.currentEstimate,
+      utilization: Math.round(utilization * 100) + '%',
+    });
+
+    // Log warning if approaching threshold
+    if (this.shouldWarn()) {
+      log.warn('Context budget warning threshold reached', {
+        currentTokens: budget.currentEstimate,
+        maxTokens: this.config.maxTokens,
+        utilization: Math.round(utilization * 100) + '%',
+        warningThreshold: Math.round(this.config.warningThreshold * 100) + '%',
+      });
+    }
+
+    return budget;
   }
 
   /**
@@ -155,7 +179,16 @@ export class ContextBudgetManager {
   isWithinBudget(): boolean {
     const currentTokens = this.calculateTotalTokens();
     const threshold = this.config.maxTokens * this.config.targetUtilization;
-    return currentTokens < threshold;
+    const withinBudget = currentTokens < threshold;
+
+    log.debug('Budget check', {
+      currentTokens,
+      threshold,
+      withinBudget,
+      utilization: Math.round((currentTokens / this.config.maxTokens) * 100) + '%',
+    });
+
+    return withinBudget;
   }
 
   /**
@@ -178,9 +211,19 @@ export class ContextBudgetManager {
    * @returns Array of compressible context entries
    */
   getCompressibleEntries(): ContextEntry[] {
-    return Array.from(this.entries.values())
+    const compressible = Array.from(this.entries.values())
       .filter(entry => entry.compressible)
       .sort((a, b) => a.addedAt.getTime() - b.addedAt.getTime());
+
+    const totalCompressibleTokens = compressible.reduce((sum, entry) => sum + entry.tokens, 0);
+
+    log.debug('Compressible entries retrieved', {
+      count: compressible.length,
+      totalCompressibleTokens,
+      potentialSavingsPercent: Math.round((totalCompressibleTokens / this.config.maxTokens) * 100) + '%',
+    });
+
+    return compressible;
   }
 
   /**
@@ -256,7 +299,13 @@ export class ContextBudgetManager {
    * Clear all entries.
    */
   clear(): void {
+    const previousCount = this.entries.size;
+    const previousTokens = this.calculateTotalTokens();
     this.entries.clear();
+    log.debug('Context budget cleared', {
+      entriesCleared: previousCount,
+      tokensFreed: previousTokens,
+    });
   }
 
   /**

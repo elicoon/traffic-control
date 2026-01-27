@@ -1,5 +1,8 @@
 import { Task } from '../db/repositories/tasks.js';
 import { ModelType } from './capacity-tracker.js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('TaskQueue');
 
 /**
  * Represents a task in the queue with computed priority information.
@@ -28,6 +31,7 @@ export class TaskQueue {
    */
   enqueue(task: Task): void {
     const existingEntry = this.tasks.get(task.id);
+    const isUpdate = !!existingEntry;
     const enqueuedAt = existingEntry?.enqueuedAt ?? new Date();
 
     const queuedTask: QueuedTask = {
@@ -37,6 +41,14 @@ export class TaskQueue {
     };
 
     this.tasks.set(task.id, queuedTask);
+
+    log.debug(isUpdate ? 'Task updated in queue' : 'Task enqueued', {
+      taskId: task.id,
+      taskTitle: task.title,
+      priority: task.priority,
+      effectivePriority: queuedTask.effectivePriority,
+      queueSize: this.tasks.size,
+    });
   }
 
   /**
@@ -44,10 +56,21 @@ export class TaskQueue {
    */
   dequeue(): QueuedTask | undefined {
     const sorted = this.getSortedTasks();
-    if (sorted.length === 0) return undefined;
+    if (sorted.length === 0) {
+      log.debug('Dequeue called on empty queue');
+      return undefined;
+    }
 
     const highest = sorted[0];
     this.tasks.delete(highest.task.id);
+
+    log.debug('Task dequeued', {
+      taskId: highest.task.id,
+      taskTitle: highest.task.title,
+      effectivePriority: highest.effectivePriority,
+      remainingQueueSize: this.tasks.size,
+    });
+
     return highest;
   }
 
@@ -69,17 +92,33 @@ export class TaskQueue {
    */
   getNextForModel(model: ModelType): QueuedTask | undefined {
     const sorted = this.getSortedTasks();
-    if (sorted.length === 0) return undefined;
+    if (sorted.length === 0) {
+      log.debug('getNextForModel called on empty queue', { model });
+      return undefined;
+    }
 
     // Find tasks that prefer this model
     const preferredTasks = sorted.filter(qt => this.taskPrefersModel(qt.task, model));
 
     // If we have model-preferred tasks, sort by effective priority and return the best
     if (preferredTasks.length > 0) {
+      log.debug('Found model-preferred task', {
+        model,
+        taskId: preferredTasks[0].task.id,
+        taskTitle: preferredTasks[0].task.title,
+        effectivePriority: preferredTasks[0].effectivePriority,
+        preferredTaskCount: preferredTasks.length,
+      });
       return preferredTasks[0];
     }
 
     // Fallback to any task
+    log.debug('No model-preferred task, falling back to highest priority', {
+      model,
+      taskId: sorted[0].task.id,
+      taskTitle: sorted[0].task.title,
+      effectivePriority: sorted[0].effectivePriority,
+    });
     return sorted[0];
   }
 
@@ -87,14 +126,23 @@ export class TaskQueue {
    * Remove a task by ID.
    */
   remove(taskId: string): void {
+    const existed = this.tasks.has(taskId);
     this.tasks.delete(taskId);
+
+    if (existed) {
+      log.debug('Task removed from queue', { taskId, remainingQueueSize: this.tasks.size });
+    } else {
+      log.debug('Attempted to remove non-existent task', { taskId });
+    }
   }
 
   /**
    * Clear all tasks from the queue.
    */
   clear(): void {
+    const previousSize = this.tasks.size;
     this.tasks.clear();
+    log.debug('Queue cleared', { previousSize });
   }
 
   /**

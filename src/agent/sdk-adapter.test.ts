@@ -31,7 +31,7 @@ describe('SDKAdapter', () => {
     });
 
     it('should map haiku to correct model ID', () => {
-      expect(MODEL_MAP.haiku).toBe('claude-haiku-3-20250307');
+      expect(MODEL_MAP.haiku).toBe('claude-3-5-haiku-20241022');
     });
   });
 
@@ -335,7 +335,7 @@ describe('SDKAdapter', () => {
           cwd: '/test/path',
           model: 'claude-sonnet-4-5-20250929',
           maxTurns: 10,
-          permissionMode: 'default',
+          permissionMode: 'bypassPermissions',
           persistSession: false,
         }),
       });

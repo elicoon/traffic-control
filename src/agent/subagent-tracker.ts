@@ -4,6 +4,9 @@
  */
 
 import { AgentHierarchy } from './types.js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('SubagentTracker');
 
 /**
  * Tracks subagent hierarchy and enforces depth limits
@@ -40,6 +43,7 @@ export class SubagentTracker {
       children: [],
     };
     this.hierarchy.set(sessionId, node);
+    log.debug('Root session registered', { sessionId, maxDepth: this.maxDepth });
     return node;
   }
 
@@ -87,6 +91,12 @@ export class SubagentTracker {
     this.hierarchy.set(childSessionId, child);
     parent.children.push(child);
 
+    log.debug('Subagent registered', {
+      sessionId: childSessionId,
+      parentSessionId,
+      depth: child.depth,
+      maxDepth: this.maxDepth,
+    });
     return child;
   }
 
@@ -164,16 +174,25 @@ export class SubagentTracker {
       }
     }
 
+    // Count descendants for logging
+    let descendantsRemoved = 0;
+
     // Recursively remove all descendants
     const removeDescendants = (hierarchy: AgentHierarchy) => {
       for (const child of hierarchy.children) {
         removeDescendants(child);
         this.hierarchy.delete(child.sessionId);
+        descendantsRemoved++;
       }
     };
 
     removeDescendants(node);
     this.hierarchy.delete(sessionId);
+    log.debug('Session removed from hierarchy', {
+      sessionId,
+      hadParent: node.parentId !== null,
+      descendantsRemoved,
+    });
   }
 
   /**

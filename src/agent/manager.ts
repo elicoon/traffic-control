@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { AgentConfig, AgentSession, AgentEvent, AgentEventHandler } from './types.js';
 import {
+  IAgentAdapter,
   ISDKAdapter,
   SDKAdapter,
   ActiveQuery,
@@ -8,7 +9,11 @@ import {
   TokenUsage,
   getSDKAdapter,
 } from './sdk-adapter.js';
+import { getAdapter, AgentMode, AdapterConfig } from './adapter-factory.js';
 import { SubagentTracker } from './subagent-tracker.js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('AgentManager');
 import type { SDKMessage, SDKResultMessage } from '@anthropic-ai/claude-agent-sdk';
 
 /**
@@ -26,23 +31,39 @@ interface SessionInfo {
 export interface AgentManagerOptions {
   /** Maximum depth for subagent nesting (default: 2) */
   maxSubagentDepth?: number;
+  /** Agent execution mode (sdk or cli) - auto-detected if not specified */
+  agentMode?: AgentMode;
+  /** Configuration for adapter selection */
+  adapterConfig?: AdapterConfig;
 }
 
 export class AgentManager {
   private sessions: Map<string, SessionInfo> = new Map();
   private eventHandlers: Map<AgentEvent['type'], AgentEventHandler[]> = new Map();
-  private sdkAdapter: ISDKAdapter;
+  private sdkAdapter: IAgentAdapter;
   private subagentTracker: SubagentTracker;
 
-  constructor(sdkAdapter?: ISDKAdapter, options?: AgentManagerOptions) {
+  constructor(sdkAdapter?: IAgentAdapter, options?: AgentManagerOptions) {
     // Initialize event handler maps
     this.eventHandlers.set('question', []);
     this.eventHandlers.set('tool_call', []);
     this.eventHandlers.set('completion', []);
     this.eventHandlers.set('error', []);
 
-    // Use provided adapter or get the default
-    this.sdkAdapter = sdkAdapter ?? getSDKAdapter();
+    // Use provided adapter, or get from factory based on config, or use SDK default
+    if (sdkAdapter) {
+      this.sdkAdapter = sdkAdapter;
+    } else if (options?.adapterConfig || options?.agentMode) {
+      // Use adapter factory with config
+      const config: AdapterConfig = {
+        ...options.adapterConfig,
+        mode: options.agentMode ?? options.adapterConfig?.mode,
+      };
+      this.sdkAdapter = getAdapter(config);
+    } else {
+      // Default: use adapter factory to auto-detect mode
+      this.sdkAdapter = getAdapter();
+    }
 
     // Initialize subagent tracker with configured max depth
     this.subagentTracker = new SubagentTracker(options?.maxSubagentDepth ?? 2);
@@ -75,15 +96,19 @@ export class AgentManager {
       try {
         await handler(event);
       } catch (err) {
-        console.error(`Error in event handler for ${event.type}:`, err);
+        log.error('Error in event handler', err instanceof Error ? err : new Error(String(err)), {
+          eventType: event.type,
+          sessionId: event.sessionId,
+        });
       }
     }
   }
 
   /**
-   * Handle an SDK message by mapping it to our event system
+   * Handle an adapter message by mapping it to our event system
+   * Works with both SDK and CLI adapters
    */
-  private async handleSDKMessage(message: SDKMessage, sessionId: string): Promise<void> {
+  private async handleAdapterMessage(message: unknown, sessionId: string): Promise<void> {
     const sessionInfo = this.sessions.get(sessionId);
     if (!sessionInfo) return;
 
@@ -166,7 +191,7 @@ export class AgentManager {
       model: config.model,
       systemPrompt: this.buildSystemPrompt(taskId, config),
       maxTurns: config.maxTurns,
-      permissionMode: 'default',
+      permissionMode: 'bypassPermissions',
     };
 
     // Start the SDK query with message handling
@@ -175,14 +200,19 @@ export class AgentManager {
         sessionId,
         `Begin working on the assigned task. Follow the system prompt instructions.`,
         sdkConfig,
-        (message, sid) => this.handleSDKMessage(message, sid)
+        (message, sid) => this.handleAdapterMessage(message, sid)
       );
 
       // Store the active query
       sessionInfo.activeQuery = activeQuery;
       this.sessions.set(sessionId, sessionInfo);
 
-      console.log(`Spawned agent ${sessionId} for task ${taskId} using model ${config.model}`);
+      log.info('Agent spawned', {
+        sessionId,
+        taskId,
+        model: config.model,
+        projectPath: config.projectPath,
+      });
     } catch (err) {
       // If SDK initialization fails, mark session as failed
       session.status = 'failed';
@@ -226,7 +256,10 @@ export class AgentManager {
     if (activeQuery && activeQuery.isRunning) {
       try {
         await activeQuery.sendMessage(message);
-        console.log(`Injected message into session ${sessionId}: ${message.substring(0, 50)}...`);
+        log.debug('Injected message into session', {
+          sessionId,
+          messagePreview: message.substring(0, 50),
+        });
       } catch (err) {
         // If sending fails, mark as blocked again
         session.status = 'blocked';
@@ -237,7 +270,7 @@ export class AgentManager {
       // No active query - store the message for when the query resumes
       sessionInfo.pendingMessage = message;
       this.sessions.set(sessionId, sessionInfo);
-      console.log(`Stored pending message for session ${sessionId}`);
+      log.debug('Stored pending message for session', { sessionId });
     }
   }
 
@@ -272,7 +305,9 @@ export class AgentManager {
       try {
         activeQuery.close();
       } catch (err) {
-        console.error(`Error closing query for session ${sessionId}:`, err);
+        log.error('Error closing query for session', err instanceof Error ? err : new Error(String(err)), {
+          sessionId,
+        });
       }
     }
 
@@ -372,7 +407,7 @@ export class AgentManager {
       model: config.model,
       systemPrompt: this.buildSubagentSystemPrompt(taskId, parentSessionId, config),
       maxTurns: config.maxTurns,
-      permissionMode: 'default',
+      permissionMode: 'bypassPermissions',
     };
 
     // Start the SDK query with message handling
@@ -381,17 +416,21 @@ export class AgentManager {
         sessionId,
         prompt,
         sdkConfig,
-        (message, sid) => this.handleSDKMessage(message, sid)
+        (message, sid) => this.handleAdapterMessage(message, sid)
       );
 
       // Store the active query
       sessionInfo.activeQuery = activeQuery;
       this.sessions.set(sessionId, sessionInfo);
 
-      console.log(
-        `Spawned subagent ${sessionId} for task ${taskId} under parent ${parentSessionId} ` +
-          `at depth ${session.depth} using model ${config.model}`
-      );
+      log.info('Subagent spawned', {
+        sessionId,
+        taskId,
+        parentSessionId,
+        depth: session.depth,
+        model: config.model,
+        projectPath: config.projectPath,
+      });
     } catch (err) {
       // If SDK initialization fails, mark session as failed
       session.status = 'failed';

@@ -85,39 +85,38 @@ npm run cli
 |----------|-------------|----------|
 | `SUPABASE_URL` | Supabase project URL | Yes |
 | `SUPABASE_SERVICE_KEY` | Supabase service role key | Yes |
-| `SLACK_BOT_TOKEN` | Slack bot OAuth token (xoxb-...) | Yes |
-| `SLACK_SIGNING_SECRET` | Slack app signing secret | Yes |
-| `SLACK_APP_TOKEN` | Slack app-level token (xapp-...) | Yes |
-| `SLACK_CHANNEL` | Channel name for notifications | No (default: trafficcontrol) |
-| `SLACK_CHANNEL_ID` | Channel ID for notifications | No |
-| `SLACK_REPORT_CHANNEL` | Channel for reports | No |
+| `SLACK_BOT_TOKEN` | Slack bot OAuth token (xoxb-...) for sending messages | Yes |
+| `SLACK_SIGNING_SECRET` | Slack app signing secret for request verification | Yes |
+| `SLACK_APP_TOKEN` | Slack app-level token (xapp-...) for Socket Mode | Yes |
+| `SLACK_CHANNEL` | Channel name for agent notifications | No (default: trafficcontrol) |
+| `SLACK_CHANNEL_ID` | Channel ID for notifications (more reliable than name) | No |
+| `SLACK_REPORT_CHANNEL` | Channel for status reports | No (default: #trafficcontrol) |
 | `ANTHROPIC_API_KEY` | Anthropic API key for Claude | Yes |
-| `OPUS_SESSION_LIMIT` | Max concurrent Opus sessions | No (default: 5) |
-| `SONNET_SESSION_LIMIT` | Max concurrent Sonnet sessions | No (default: 10) |
+| `OPUS_SESSION_LIMIT` | Max concurrent Opus sessions | No (default: 1, recommended max: 2) |
+| `SONNET_SESSION_LIMIT` | Max concurrent Sonnet sessions | No (default: 2, recommended max: 5) |
 | `TC_LEARNINGS_PATH` | Path to learnings directory | No (default: ./learnings) |
 | `TC_RETROSPECTIVES_PATH` | Path to retrospectives | No (default: ./retrospectives) |
 | `TC_AGENTS_PATH` | Path to agents.md | No (default: ./agents.md) |
 
 ## Slack Setup
 
+TrafficControl requires Slack integration for agent-human communication. For detailed setup instructions, see [docs/SLACK_SETUP.md](docs/SLACK_SETUP.md).
+
+### Quick Start
+
 1. Create a Slack App at https://api.slack.com/apps
-2. Enable Socket Mode in Settings > Socket Mode
-3. Create an App-Level Token with `connections:write` scope
-4. Add Bot Token Scopes under OAuth & Permissions:
-   - `chat:write` - Send messages
-   - `channels:read` - List public channels
-   - `channels:history` - Read message history
-   - `channels:manage` - Manage channel settings
-   - `reactions:read` - Read emoji reactions
-   - `users:read` - Read user information
-5. Enable Events under Event Subscriptions and subscribe to:
-   - `message.channels`
-6. Install the app to your workspace
-7. Copy tokens to `.env`:
-   - Bot User OAuth Token -> `SLACK_BOT_TOKEN`
-   - Signing Secret -> `SLACK_SIGNING_SECRET`
-   - App-Level Token -> `SLACK_APP_TOKEN`
-8. Invite the bot to your channel: `/invite @YourBotName`
+2. Enable Socket Mode and create an App-Level Token with `connections:write` scope
+3. Add Bot Token Scopes: `chat:write`, `channels:read`, `channels:history`, `channels:manage`, `reactions:read`, `users:read`
+4. Enable Event Subscriptions and subscribe to `message.channels`
+5. Install the app to your workspace
+6. Copy tokens to `.env`:
+   - Bot User OAuth Token → `SLACK_BOT_TOKEN` (xoxb-...)
+   - Signing Secret → `SLACK_SIGNING_SECRET`
+   - App-Level Token → `SLACK_APP_TOKEN` (xapp-...)
+   - Channel ID → `SLACK_CHANNEL_ID`
+7. Invite the bot to your channel: `/invite @YourBotName`
+
+For troubleshooting, security best practices, and advanced configuration options, refer to the [detailed setup guide](docs/SLACK_SETUP.md).
 
 ## Database Setup
 
@@ -237,7 +236,7 @@ traffic-control/
 ├── CLAUDE.md                 # AI assistant instructions
 ├── agents.md                 # Agent behavior guidelines
 ├── CAPABILITIES.md           # Tools & skills reference
-└── trafficControl.md         # Core philosophy
+└── traffic-control.md         # Core philosophy
 ```
 
 ## How It Works
