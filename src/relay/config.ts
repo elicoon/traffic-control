@@ -19,7 +19,7 @@ export interface RelayConfig {
   model: 'sonnet' | 'opus';
   /** Path to the Claude CLI executable (default: 'claude') */
   cliPath: string;
-  /** Base directory for projects - enables partial name matching (e.g., "/path/to/your/projects") */
+  /** Base directory for projects - enables partial name matching (e.g., "~/projects") */
   projectsBaseDir?: string;
 }
 
