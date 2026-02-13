@@ -265,7 +265,10 @@ describe('BudgetTracker', () => {
       mockClient.setResult('tc_budgets', [budgetData]);
       mockClient.setResult('tc_usage_log', usageLogs);
 
-      const status = await tracker.getBudgetStatus('project-1', 'monthly');
+      // Use a date late enough in the month that $300/$500 projects as on-track
+      // At Jan 25: percentElapsed ≈ 25/31 ≈ 0.81, projected ≈ $372 < $500
+      const asOfDate = new Date('2026-01-25T12:00:00Z');
+      const status = await tracker.getBudgetStatus('project-1', 'monthly', asOfDate);
 
       expect(status).not.toBeNull();
       expect(status!.budgetUsd).toBe(500);

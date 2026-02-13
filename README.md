@@ -6,7 +6,7 @@ Autonomous agent orchestration system for Claude Code.
 
 TrafficControl manages autonomous Claude Code agents, coordinating task assignment, status tracking, and human-in-the-loop communication via Slack. The system is designed to maximize Claude usage capacity (100% utilization) while minimizing manual intervention.
 
-**Current Status:** Phase 5 complete with 1257 passing tests.
+**Current Status:** Phase 5 complete with 1,683 passing tests.
 
 ## Features
 
@@ -63,7 +63,7 @@ TrafficControl manages autonomous Claude Code agents, coordinating task assignme
 # Run with hot reload
 npm run dev
 
-# Run tests (1257 tests)
+# Run tests (1683 tests)
 npm run test
 
 # Run specific test file
