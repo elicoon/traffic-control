@@ -47,7 +47,7 @@ export class ProjectStore {
   /**
    * Set the base directory for project discovery.
    *
-   * @param baseDir - Base directory path (e.g., "C:/Users/Eli/projects")
+   * @param baseDir - Base directory path (e.g., "/home/eli/projects")
    */
   setProjectsBaseDir(baseDir: string): void {
     this.projectsBaseDir = baseDir;
