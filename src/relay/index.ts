@@ -21,7 +21,7 @@
  *   RELAY_TIMEOUT_MS     - Timeout in ms (default: 600000 = 10 min)
  *   RELAY_MODEL          - Model to use (default: sonnet)
  *   RELAY_CLI_PATH       - Path to claude CLI (default: claude)
- *   RELAY_PROJECTS_DIR   - Base dir for project discovery (e.g., /home/eli/projects)
+ *   RELAY_PROJECTS_DIR   - Base dir for project discovery (e.g., ~/projects)
  */
 
 import 'dotenv/config';
