@@ -444,7 +444,7 @@ SELECT 1 as health_check;  -- Simple connectivity test
 npm run build          # Compile TypeScript
 npm run start          # Start the orchestrator
 npm run dev            # Development mode with hot reload
-npm run test           # Run all tests (1287 tests)
+npm run test           # Run all tests (1683 tests)
 npm run test:watch     # Run tests in watch mode
 npm run cli            # Run CLI commands
 ```
