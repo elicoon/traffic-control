@@ -13,6 +13,5 @@ export type { MarkdownGeneratorOptions } from './markdown-generator.js';
 export { BacklogMarkdownImporter } from './markdown-importer.js';
 export type { ImportResult, MarkdownImporterOptions } from './markdown-importer.js';
 
-// TODO: Validator is stubbed out - needs implementation
-// export { BacklogValidator } from './validator.js';
-// export type { ValidationIssue, ValidationResult, ValidatorOptions } from './validator.js';
+export { BacklogValidator } from './validator.js';
+export type { ValidationIssue, ValidationResult, ValidatorOptions } from './validator.js';
