@@ -58,6 +58,8 @@ const HIGH_CONFIDENCE_THRESHOLD = 20;
  * Calculates multipliers to apply to future estimates for improved accuracy.
  */
 export class CalibrationEngine {
+  private saveLocks = new Map<string, Promise<CalibrationFactor[]>>();
+
   constructor(private client: SupabaseClient) {}
 
   /**
@@ -191,27 +193,45 @@ export class CalibrationEngine {
    * Saves calibration factors to the database.
    */
   async saveCalibrationFactors(projectId: string): Promise<CalibrationFactor[]> {
+    // Serialize concurrent saves for the same project to prevent duplicates.
+    // The upsert's ON CONFLICT doesn't match NULL task_type values (SQL NULL != NULL),
+    // so we use delete-then-insert, chaining each call after the previous one.
+    const previous = this.saveLocks.get(projectId) ?? Promise.resolve([] as CalibrationFactor[]);
+    const next = previous
+      .catch(() => {}) // Don't let a prior failure block the chain
+      .then(() => this.doSaveCalibrationFactors(projectId));
+    this.saveLocks.set(projectId, next);
+
+    try {
+      return await next;
+    } finally {
+      // Only clean up if we're still the latest in the chain
+      if (this.saveLocks.get(projectId) === next) {
+        this.saveLocks.delete(projectId);
+      }
+    }
+  }
+
+  private async doSaveCalibrationFactors(projectId: string): Promise<CalibrationFactor[]> {
     const factors = await this.calculateCalibrationFactors(projectId);
+
+    // Delete existing factors for this project, then insert fresh ones.
+    await this.clearCalibrationFactors(projectId);
 
     const savedFactors: CalibrationFactor[] = [];
 
     for (const factor of factors) {
       const { data, error } = await this.client
         .from('tc_calibration_factors')
-        .upsert(
-          {
-            project_id: projectId,
-            complexity: factor.complexity,
-            task_type: factor.taskType ?? null,
-            sessions_multiplier: factor.sessionsMultiplier,
-            intervention_multiplier: factor.interventionMultiplier,
-            sample_size: factor.sampleSize,
-            last_updated: new Date().toISOString()
-          },
-          {
-            onConflict: 'project_id,complexity,task_type'
-          }
-        )
+        .insert({
+          project_id: projectId,
+          complexity: factor.complexity,
+          task_type: factor.taskType ?? null,
+          sessions_multiplier: factor.sessionsMultiplier,
+          intervention_multiplier: factor.interventionMultiplier,
+          sample_size: factor.sampleSize,
+          last_updated: new Date().toISOString()
+        })
         .select()
         .single();
 
