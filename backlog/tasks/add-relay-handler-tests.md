@@ -1,6 +1,6 @@
 ### Add Unit Tests for RelayHandler CLI Spawning and JSON Streaming
 - **Project:** traffic-control
-- **Status:** not started
+- **Status:** done
 - **Priority:** high
 - **Type:** test-coverage
 - **Scope:** medium
