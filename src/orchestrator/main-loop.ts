@@ -6,6 +6,7 @@ import { CapacityTracker } from '../scheduler/capacity-tracker.js';
 import { LearningProvider } from '../learning/learning-provider.js';
 import { RetrospectiveTrigger } from '../learning/retrospective-trigger.js';
 import { TaskRepository, Task } from '../db/repositories/tasks.js';
+import { UsageLogRepository } from '../db/repositories/usage-log.js';
 import { StateManager, OrchestrationState, AgentState } from './state-manager.js';
 import { EventDispatcher, AgentEvent, EventHandler } from './event-dispatcher.js';
 import {
@@ -88,6 +89,8 @@ export interface OrchestrationDependencies {
   retrospectiveTrigger: RetrospectiveTrigger;
   /** Optional task repository for looking up task details (e.g., projectId) */
   taskRepository?: TaskRepository;
+  /** Optional usage log repository for persisting agent usage data */
+  usageLogRepository?: UsageLogRepository;
 }
 
 /**
@@ -405,6 +408,23 @@ export class MainLoop {
         );
       }
 
+      // Persist usage to database
+      if (this.deps.usageLogRepository) {
+        try {
+          await this.deps.usageLogRepository.create({
+            session_id: event.agentId,
+            task_id: event.taskId || null,
+            model: agent.model,
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            cost_usd: costUsd,
+            event_type: 'completion',
+          });
+        } catch (err) {
+          log.warn('Failed to persist usage log', { error: String(err), agentId: event.agentId });
+        }
+      }
+
       // Record productivity
       const durationMs = payload.durationMs ?? (Date.now() - agent.startedAt.getTime());
       this.productivityMonitor.recordAgentCompletion(
@@ -458,6 +478,23 @@ export class MainLoop {
           outputTokens,
           costUsd
         );
+      }
+
+      // Persist usage to database (even on error — partial work still costs money)
+      if (this.deps.usageLogRepository) {
+        try {
+          await this.deps.usageLogRepository.create({
+            session_id: event.agentId,
+            task_id: event.taskId || null,
+            model: agent.model,
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            cost_usd: costUsd,
+            event_type: 'error',
+          });
+        } catch (err) {
+          log.warn('Failed to persist usage log', { error: String(err), agentId: event.agentId });
+        }
       }
 
       // Record failed productivity
