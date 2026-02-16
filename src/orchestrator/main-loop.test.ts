@@ -103,6 +103,29 @@ const createMockTaskRepository = () => ({
   getByStatus: vi.fn(),
 });
 
+const createMockUsageLogRepository = () => ({
+  create: vi.fn().mockResolvedValue({
+    id: 'usage-log-1',
+    session_id: 'session-1',
+    task_id: 'task-1',
+    model: 'opus',
+    input_tokens: 100,
+    output_tokens: 200,
+    cache_read_tokens: 0,
+    cache_creation_tokens: 0,
+    cost_usd: 0.5,
+    event_type: 'completion',
+    created_at: new Date().toISOString(),
+  }),
+  getBySessionId: vi.fn().mockResolvedValue([]),
+  getByTaskId: vi.fn().mockResolvedValue([]),
+  getTotalUsageBySession: vi.fn().mockResolvedValue({ inputTokens: 0, outputTokens: 0, totalTokens: 0, costUSD: 0 }),
+  getStats: vi.fn().mockResolvedValue({}),
+  getRecent: vi.fn().mockResolvedValue([]),
+  deleteOlderThan: vi.fn().mockResolvedValue(0),
+  getDailySummary: vi.fn().mockResolvedValue([]),
+});
+
 const createMockDependencies = (): OrchestrationDependencies => ({
   scheduler: createMockScheduler() as any,
   agentManager: createMockAgentManager() as any,
@@ -112,6 +135,7 @@ const createMockDependencies = (): OrchestrationDependencies => ({
   learningProvider: createMockLearningProvider() as any,
   retrospectiveTrigger: createMockRetrospectiveTrigger() as any,
   taskRepository: createMockTaskRepository() as any,
+  usageLogRepository: createMockUsageLogRepository() as any,
 });
 
 const createDefaultConfig = (): OrchestrationConfig => ({
@@ -731,6 +755,235 @@ describe('MainLoop', () => {
       expect(stats).toHaveProperty('dbHealth');
       expect(stats.dbHealth).toHaveProperty('healthy');
       expect(stats.dbHealth).toHaveProperty('consecutiveFailures');
+    });
+  });
+
+  describe('usage log persistence', () => {
+    it('should persist usage log on successful agent completion', async () => {
+      const stateManager = mainLoop.getStateManager();
+      stateManager.addAgent({
+        sessionId: 'session-1',
+        taskId: 'task-1',
+        model: 'opus',
+        status: 'running',
+        startedAt: new Date(),
+      });
+
+      await mainLoop.handleAgentEvent({
+        type: 'completion',
+        agentId: 'session-1',
+        taskId: 'task-1',
+        payload: {
+          inputTokens: 500,
+          outputTokens: 1000,
+          costUsd: 2.5,
+          durationMs: 30000,
+          summary: 'Task completed successfully',
+        },
+        timestamp: new Date(),
+      });
+
+      expect(deps.usageLogRepository!.create).toHaveBeenCalledWith({
+        session_id: 'session-1',
+        task_id: 'task-1',
+        model: 'opus',
+        input_tokens: 500,
+        output_tokens: 1000,
+        cost_usd: 2.5,
+        event_type: 'completion',
+      });
+    });
+
+    it('should persist usage log on agent error', async () => {
+      const stateManager = mainLoop.getStateManager();
+      stateManager.addAgent({
+        sessionId: 'session-2',
+        taskId: 'task-2',
+        model: 'sonnet',
+        status: 'running',
+        startedAt: new Date(),
+      });
+
+      await mainLoop.handleAgentEvent({
+        type: 'error',
+        agentId: 'session-2',
+        taskId: 'task-2',
+        payload: {
+          error: 'Agent crashed',
+          inputTokens: 200,
+          outputTokens: 50,
+          costUsd: 0.1,
+        },
+        timestamp: new Date(),
+      });
+
+      expect(deps.usageLogRepository!.create).toHaveBeenCalledWith({
+        session_id: 'session-2',
+        task_id: 'task-2',
+        model: 'sonnet',
+        input_tokens: 200,
+        output_tokens: 50,
+        cost_usd: 0.1,
+        event_type: 'error',
+      });
+    });
+
+    it('should populate correct fields from tokensUsed fallback when inputTokens/outputTokens not provided', async () => {
+      const stateManager = mainLoop.getStateManager();
+      stateManager.addAgent({
+        sessionId: 'session-3',
+        taskId: 'task-3',
+        model: 'haiku',
+        status: 'running',
+        startedAt: new Date(),
+      });
+
+      await mainLoop.handleAgentEvent({
+        type: 'completion',
+        agentId: 'session-3',
+        taskId: 'task-3',
+        payload: {
+          tokensUsed: 1000,
+          costUsd: 0.05,
+        },
+        timestamp: new Date(),
+      });
+
+      // When only tokensUsed is provided, inputTokens = floor(tokensUsed * 0.3), outputTokens = floor(tokensUsed * 0.7)
+      expect(deps.usageLogRepository!.create).toHaveBeenCalledWith({
+        session_id: 'session-3',
+        task_id: 'task-3',
+        model: 'haiku',
+        input_tokens: 300,
+        output_tokens: 700,
+        cost_usd: 0.05,
+        event_type: 'completion',
+      });
+    });
+
+    it('should set task_id to null when taskId is empty string', async () => {
+      const stateManager = mainLoop.getStateManager();
+      stateManager.addAgent({
+        sessionId: 'session-4',
+        taskId: '',
+        model: 'opus',
+        status: 'running',
+        startedAt: new Date(),
+      });
+
+      await mainLoop.handleAgentEvent({
+        type: 'completion',
+        agentId: 'session-4',
+        taskId: '',
+        payload: {
+          inputTokens: 100,
+          outputTokens: 200,
+          costUsd: 0.5,
+        },
+        timestamp: new Date(),
+      });
+
+      expect(deps.usageLogRepository!.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          task_id: null,
+        })
+      );
+    });
+
+    it('should not crash when usageLogRepository.create throws', async () => {
+      vi.mocked(deps.usageLogRepository!.create).mockRejectedValue(new Error('DB insert failed'));
+
+      const stateManager = mainLoop.getStateManager();
+      stateManager.addAgent({
+        sessionId: 'session-5',
+        taskId: 'task-5',
+        model: 'opus',
+        status: 'running',
+        startedAt: new Date(),
+      });
+
+      // Should not throw despite the repository error
+      await expect(
+        mainLoop.handleAgentEvent({
+          type: 'completion',
+          agentId: 'session-5',
+          taskId: 'task-5',
+          payload: {
+            inputTokens: 100,
+            outputTokens: 200,
+            costUsd: 1.0,
+          },
+          timestamp: new Date(),
+        })
+      ).resolves.not.toThrow();
+
+      // Agent should still be removed from state (completion flow continued)
+      expect(stateManager.getState().activeAgents.has('session-5')).toBe(false);
+    });
+
+    it('should not crash when usageLogRepository.create throws on error event', async () => {
+      vi.mocked(deps.usageLogRepository!.create).mockRejectedValue(new Error('DB insert failed'));
+
+      const stateManager = mainLoop.getStateManager();
+      stateManager.addAgent({
+        sessionId: 'session-5b',
+        taskId: 'task-5b',
+        model: 'sonnet',
+        status: 'running',
+        startedAt: new Date(),
+      });
+
+      // Should not throw despite the repository error
+      await expect(
+        mainLoop.handleAgentEvent({
+          type: 'error',
+          agentId: 'session-5b',
+          taskId: 'task-5b',
+          payload: {
+            error: 'Agent crashed',
+            inputTokens: 200,
+            outputTokens: 50,
+            costUsd: 0.1,
+          },
+          timestamp: new Date(),
+        })
+      ).resolves.not.toThrow();
+
+      // Agent should still be removed from state (error flow continued)
+      expect(stateManager.getState().activeAgents.has('session-5b')).toBe(false);
+    });
+
+    it('should not error when usageLogRepository is not provided', async () => {
+      const depsWithoutUsageRepo = createMockDependencies();
+      delete (depsWithoutUsageRepo as any).usageLogRepository;
+
+      const loopWithoutRepo = new MainLoop(config, depsWithoutUsageRepo);
+      const stateManager = loopWithoutRepo.getStateManager();
+      stateManager.addAgent({
+        sessionId: 'session-6',
+        taskId: 'task-6',
+        model: 'opus',
+        status: 'running',
+        startedAt: new Date(),
+      });
+
+      // Should not throw when usageLogRepository is undefined
+      await expect(
+        loopWithoutRepo.handleAgentEvent({
+          type: 'completion',
+          agentId: 'session-6',
+          taskId: 'task-6',
+          payload: {
+            inputTokens: 100,
+            outputTokens: 200,
+            costUsd: 1.0,
+          },
+          timestamp: new Date(),
+        })
+      ).resolves.not.toThrow();
+
+      // Agent should still be removed from state
+      expect(stateManager.getState().activeAgents.has('session-6')).toBe(false);
     });
   });
 
