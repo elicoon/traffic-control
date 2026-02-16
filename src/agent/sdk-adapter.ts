@@ -32,6 +32,33 @@ export const MODEL_MAP: Record<AgentConfig['model'], string> = {
 };
 
 /**
+ * Fallback pricing per million tokens (used when CostTracker/DB is unavailable).
+ * These are hardcoded as a safety net — a slightly stale price is better than $0.
+ */
+export const FALLBACK_PRICING: Record<string, { inputPerMillion: number; outputPerMillion: number }> = {
+  opus: { inputPerMillion: 15, outputPerMillion: 75 },
+  sonnet: { inputPerMillion: 3, outputPerMillion: 15 },
+  haiku: { inputPerMillion: 0.80, outputPerMillion: 4 },
+};
+
+/**
+ * Calculate cost from token counts using fallback pricing.
+ * Returns 0 if the model is unknown.
+ */
+export function calculateCostFromTokens(
+  model: string,
+  inputTokens: number,
+  outputTokens: number
+): number {
+  const pricing = FALLBACK_PRICING[model];
+  if (!pricing) {
+    return 0;
+  }
+  return (inputTokens / 1_000_000) * pricing.inputPerMillion +
+    (outputTokens / 1_000_000) * pricing.outputPerMillion;
+}
+
+/**
  * Configuration for SDK adapter
  */
 export interface SDKAdapterConfig {
@@ -168,6 +195,7 @@ export interface ISDKAdapter extends IAgentAdapter {
  */
 export class SDKAdapter implements ISDKAdapter {
   private queryFn: typeof import('@anthropic-ai/claude-agent-sdk').query;
+  private sessionModels: Map<string, AgentConfig['model']> = new Map();
 
   constructor(queryFn?: typeof import('@anthropic-ai/claude-agent-sdk').query) {
     // Lazily load the SDK query function if not provided (for testing)
@@ -199,6 +227,9 @@ export class SDKAdapter implements ISDKAdapter {
     onMessage?: SDKMessageHandler
   ): Promise<ActiveQuery> {
     await this.ensureQueryFn();
+
+    // Track which model this session uses for cost calculation
+    this.sessionModels.set(sessionId, config.model);
 
     const abortController = new AbortController();
 
@@ -291,17 +322,32 @@ export class SDKAdapter implements ISDKAdapter {
   }
 
   /**
-   * Extract token usage information from an SDK result message
+   * Extract token usage information from an SDK result message.
+   * Calculates costUSD from token counts using fallback pricing when the SDK
+   * does not provide total_cost_usd (which is the common case).
    */
-  extractUsage(result: SDKResultMessage): TokenUsage {
+  extractUsage(result: SDKResultMessage, model?: AgentConfig['model']): TokenUsage {
     const usage = result.usage;
+    const inputTokens = usage.input_tokens ?? 0;
+    const outputTokens = usage.output_tokens ?? 0;
+
+    // Look up model from session tracking if not provided directly
+    const resolvedModel = model ?? this.sessionModels.get(result.session_id);
+
+    // Calculate cost from tokens using fallback pricing.
+    // Only fall back to SDK's total_cost_usd if we can't calculate ourselves.
+    const calculatedCost = resolvedModel
+      ? calculateCostFromTokens(resolvedModel, inputTokens, outputTokens)
+      : 0;
+    const costUSD = calculatedCost > 0 ? calculatedCost : (result.total_cost_usd ?? 0);
+
     return {
-      inputTokens: usage.input_tokens ?? 0,
-      outputTokens: usage.output_tokens ?? 0,
-      totalTokens: (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
       cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
       cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
-      costUSD: result.total_cost_usd ?? 0,
+      costUSD,
     };
   }
 
@@ -350,6 +396,10 @@ export class SDKAdapter implements ISDKAdapter {
 
       case 'result': {
         const resultMsg = message as SDKResultSuccess | SDKResultError;
+        const usage = this.extractUsage(resultMsg);
+        // Clean up session model tracking after extracting usage
+        this.sessionModels.delete(sessionId);
+
         if (resultMsg.subtype === 'success') {
           return {
             type: 'completion',
@@ -357,7 +407,7 @@ export class SDKAdapter implements ISDKAdapter {
             data: {
               success: true,
               result: (resultMsg as SDKResultSuccess).result,
-              usage: this.extractUsage(resultMsg),
+              usage,
               numTurns: resultMsg.num_turns,
               durationMs: resultMsg.duration_ms,
             },
@@ -371,7 +421,7 @@ export class SDKAdapter implements ISDKAdapter {
               success: false,
               errors: (resultMsg as SDKResultError).errors,
               subtype: resultMsg.subtype,
-              usage: this.extractUsage(resultMsg),
+              usage,
               numTurns: resultMsg.num_turns,
               durationMs: resultMsg.duration_ms,
             },
