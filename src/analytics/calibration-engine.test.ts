@@ -488,8 +488,7 @@ describe('CalibrationEngine', () => {
       await projectRepo.delete(emptyProject.id);
     });
 
-    // TODO: Fix flaky concurrency test - duplicates created when running concurrent saves
-    it.skip('should handle concurrent calibration factor updates', async () => {
+    it('should handle concurrent calibration factor updates', async () => {
       // Clear any existing factors first
       await engine.clearCalibrationFactors(testProjectId);
 
