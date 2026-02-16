@@ -8,6 +8,7 @@ import { setMessageHandler, setupHandlers } from './slack/handlers.js';
 import { ContextBudgetManager, ContextEntry, DelegationMetricsManager, PreFlightChecker, createPreFlightChecker } from './orchestrator/index.js';
 import { DashboardServer } from './dashboard/index.js';
 import { MetricsCollector, RecommendationEngine } from './reporter/index.js';
+import { CostTracker } from './analytics/cost-tracker.js';
 
 interface PendingQuestion {
   sessionId: string;
@@ -316,6 +317,7 @@ export class Orchestrator {
           recommendationEngine: this.recommendationEngine,
           agentManager: this.agentManager,
           scheduler: this.scheduler,
+          costTracker: new CostTracker(this.supabaseClient),
         });
         await this.dashboardServer.start();
         console.log(`Dashboard available at http://localhost:${dashboardPort}`);

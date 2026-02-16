@@ -38,6 +38,11 @@ const mockScheduler = {
   getStats: vi.fn(),
 };
 
+const mockCostTracker = {
+  calculateCost: vi.fn().mockResolvedValue({ inputCost: 0, outputCost: 0, totalCost: 0 }),
+  getAllCurrentPricing: vi.fn().mockResolvedValue([]),
+};
+
 describe('DashboardServer', () => {
   let dashboardServer: DashboardServer;
 
@@ -49,6 +54,7 @@ describe('DashboardServer', () => {
     recommendationEngine: mockRecommendationEngine as any,
     agentManager: mockAgentManager as any,
     scheduler: mockScheduler as any,
+    costTracker: mockCostTracker as any,
   };
 
   beforeEach(() => {
