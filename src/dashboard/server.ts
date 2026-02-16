@@ -10,6 +10,8 @@ import { RecommendationEngine, RecommendationReport, Recommendation } from '../r
 import { AgentManager } from '../agent/manager.js';
 import { Scheduler, SchedulerStats } from '../scheduler/scheduler.js';
 import { CapacityStats } from '../scheduler/capacity-tracker.js';
+import { CostTracker } from '../analytics/cost-tracker.js';
+import { calculateTokenCost } from './routes/api.js';
 
 // Get __dirname equivalent for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -26,6 +28,7 @@ export interface DashboardServerConfig {
   recommendationEngine: RecommendationEngine;
   agentManager: AgentManager;
   scheduler: Scheduler;
+  costTracker: CostTracker;
 }
 
 /**
@@ -66,22 +69,6 @@ interface SSEClient {
 }
 
 /**
- * Cost calculation constants (USD per 1M tokens)
- * Note: These are hardcoded for dashboard display performance.
- * For historical cost accuracy with database lookups, use CostTracker from analytics module.
- */
-const TOKEN_COSTS = {
-  opus: {
-    input: 15.00,
-    output: 75.00,
-  },
-  sonnet: {
-    input: 3.00,
-    output: 15.00,
-  },
-};
-
-/**
  * Dashboard server that provides REST API and SSE for real-time updates
  */
 export class DashboardServer {
@@ -99,26 +86,19 @@ export class DashboardServer {
     this.setupRoutes();
   }
 
-  /**
-   * Setup Express middleware
-   */
   private setupMiddleware(): void {
     this.app.use(express.json());
     this.app.use(express.static(path.join(__dirname, 'public')));
 
-    // CORS configuration - restrictive in production, permissive in development
     this.app.use((_req: Request, res: Response, next: NextFunction) => {
       const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS?.split(',') || [];
       const origin = _req.headers.origin;
 
       if (process.env.NODE_ENV === 'production') {
-        // In production, only allow configured origins
         if (origin && allowedOrigins.includes(origin)) {
           res.header('Access-Control-Allow-Origin', origin);
         }
-        // If no origin header or not in allowlist, don't set CORS header (browser will block)
       } else {
-        // In development, allow all origins for easier testing
         res.header('Access-Control-Allow-Origin', '*');
       }
 
@@ -128,16 +108,11 @@ export class DashboardServer {
     });
   }
 
-  /**
-   * Setup all routes
-   */
   private setupRoutes(): void {
-    // Serve dashboard HTML
     this.app.get('/', (_req: Request, res: Response) => {
       res.sendFile(path.join(__dirname, 'views', 'index.html'));
     });
 
-    // API Routes
     this.app.get('/api/status', this.handleGetStatus.bind(this));
     this.app.get('/api/projects', this.handleGetProjects.bind(this));
     this.app.get('/api/projects/:id', this.handleGetProject.bind(this));
@@ -147,29 +122,23 @@ export class DashboardServer {
     this.app.get('/api/recommendations', this.handleGetRecommendations.bind(this));
     this.app.get('/api/events', this.handleSSE.bind(this));
 
-    // Action routes
     this.app.post('/api/tasks/:id/priority', this.handleUpdateTaskPriority.bind(this));
     this.app.post('/api/projects/:id/pause', this.handlePauseProject.bind(this));
     this.app.post('/api/projects/:id/resume', this.handleResumeProject.bind(this));
 
-    // Error handler
     this.app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
       console.error('Dashboard server error:', err);
       res.status(500).json({ error: 'Internal server error' });
     });
   }
 
-  /**
-   * GET /api/status - Get overall system status
-   */
   private async handleGetStatus(_req: Request, res: Response): Promise<void> {
     try {
       const schedulerStats = this.config.scheduler.getStats();
       const systemMetrics = await this.config.metricsCollector.collectSystemMetrics();
 
-      // Calculate cost
-      const opusCost = this.calculateCost(systemMetrics.totalTokensOpus, 'opus');
-      const sonnetCost = this.calculateCost(systemMetrics.totalTokensSonnet, 'sonnet');
+      const opusCost = await calculateTokenCost(this.config.costTracker, systemMetrics.totalTokensOpus, 'opus');
+      const sonnetCost = await calculateTokenCost(this.config.costTracker, systemMetrics.totalTokensSonnet, 'sonnet');
       const totalCost = opusCost + sonnetCost;
 
       const status: SystemStatus = {
@@ -180,7 +149,7 @@ export class DashboardServer {
           tasksCompleted: systemMetrics.totalTasksCompletedToday,
           tokensUsed: systemMetrics.totalTokensOpus + systemMetrics.totalTokensSonnet,
           costUsd: totalCost,
-          interventions: systemMetrics.totalTasksBlocked, // Blocked tasks represent interventions needed
+          interventions: systemMetrics.totalTasksBlocked,
         },
       };
 
@@ -191,16 +160,16 @@ export class DashboardServer {
     }
   }
 
-  /**
-   * GET /api/projects - List projects with stats
-   */
   private async handleGetProjects(_req: Request, res: Response): Promise<void> {
     try {
       const projects = await this.config.projectRepo.listActive();
       const projectMetrics = await this.config.metricsCollector.collectAllProjectMetrics();
 
-      const summaries: ProjectSummary[] = (projects || []).map(project => {
+      const summaries: ProjectSummary[] = await Promise.all((projects || []).map(async project => {
         const metrics = (projectMetrics || []).find(m => m.projectId === project.id);
+
+        const opusCost = await calculateTokenCost(this.config.costTracker, metrics?.tokensOpus || 0, 'opus');
+        const sonnetCost = await calculateTokenCost(this.config.costTracker, metrics?.tokensSonnet || 0, 'sonnet');
 
         return {
           id: project.id,
@@ -210,10 +179,9 @@ export class DashboardServer {
           queuedTasks: metrics?.tasksQueued || 0,
           blockedTasks: metrics?.tasksBlocked || 0,
           roi: metrics?.completionRate || 0,
-          costToday: this.calculateCost(metrics?.tokensOpus || 0, 'opus') +
-                     this.calculateCost(metrics?.tokensSonnet || 0, 'sonnet'),
+          costToday: opusCost + sonnetCost,
         };
-      });
+      }));
 
       res.json(summaries);
     } catch (error) {
@@ -222,9 +190,6 @@ export class DashboardServer {
     }
   }
 
-  /**
-   * GET /api/projects/:id - Get project details
-   */
   private async handleGetProject(req: Request, res: Response): Promise<void> {
     try {
       const projectId = req.params.id as string;
@@ -237,20 +202,13 @@ export class DashboardServer {
       const metrics = await this.config.metricsCollector.collectProjectMetrics(project.id);
       const tasks = await this.config.taskRepo.getByProject(project.id);
 
-      res.json({
-        project,
-        metrics,
-        tasks,
-      });
+      res.json({ project, metrics, tasks });
     } catch (error) {
       console.error('Error getting project:', error);
       res.status(500).json({ error: 'Failed to get project details' });
     }
   }
 
-  /**
-   * GET /api/agents - List active agent sessions
-   */
   private async handleGetAgents(_req: Request, res: Response): Promise<void> {
     try {
       const sessions = this.config.agentManager.getActiveSessions();
@@ -261,21 +219,12 @@ export class DashboardServer {
           if (session.taskId) {
             const task = await this.config.taskRepo.getById(session.taskId);
             if (task) {
-              taskInfo = {
-                id: task.id,
-                title: task.title,
-                projectId: task.project_id,
-              };
+              taskInfo = { id: task.id, title: task.title, projectId: task.project_id };
             }
           }
-
           return {
-            sessionId: session.id,
-            model: session.model,
-            status: session.status,
-            startedAt: session.startedAt,
-            tokensUsed: session.tokensUsed,
-            task: taskInfo,
+            sessionId: session.id, model: session.model, status: session.status,
+            startedAt: session.startedAt, tokensUsed: session.tokensUsed, task: taskInfo,
           };
         })
       );
@@ -287,9 +236,6 @@ export class DashboardServer {
     }
   }
 
-  /**
-   * GET /api/tasks - Get task queue with priorities
-   */
   private async handleGetTasks(_req: Request, res: Response): Promise<void> {
     try {
       const tasks = await this.config.taskRepo.getQueued();
@@ -300,55 +246,37 @@ export class DashboardServer {
     }
   }
 
-  /**
-   * GET /api/metrics - Get ROI and cost metrics
-   */
   private async handleGetMetrics(_req: Request, res: Response): Promise<void> {
     try {
       const systemMetrics = await this.config.metricsCollector.collectSystemMetrics();
       const projectMetrics = await this.config.metricsCollector.collectAllProjectMetrics();
 
-      // Calculate cost breakdown
-      const opusCost = this.calculateCost(systemMetrics.totalTokensOpus, 'opus');
-      const sonnetCost = this.calculateCost(systemMetrics.totalTokensSonnet, 'sonnet');
+      const opusCost = await calculateTokenCost(this.config.costTracker, systemMetrics.totalTokensOpus, 'opus');
+      const sonnetCost = await calculateTokenCost(this.config.costTracker, systemMetrics.totalTokensSonnet, 'sonnet');
 
       const costBreakdown = {
-        opus: {
-          tokens: systemMetrics.totalTokensOpus,
-          cost: opusCost,
-        },
-        sonnet: {
-          tokens: systemMetrics.totalTokensSonnet,
-          cost: sonnetCost,
-        },
+        opus: { tokens: systemMetrics.totalTokensOpus, cost: opusCost },
+        sonnet: { tokens: systemMetrics.totalTokensSonnet, cost: sonnetCost },
         total: opusCost + sonnetCost,
       };
 
-      // Project-level breakdown
-      const projectCosts = projectMetrics.map(pm => ({
-        projectId: pm.projectId,
-        projectName: pm.projectName,
-        opusCost: this.calculateCost(pm.tokensOpus, 'opus'),
-        sonnetCost: this.calculateCost(pm.tokensSonnet, 'sonnet'),
-        totalCost: this.calculateCost(pm.tokensOpus, 'opus') +
-                   this.calculateCost(pm.tokensSonnet, 'sonnet'),
-        completionRate: pm.completionRate,
+      const projectCosts = await Promise.all(projectMetrics.map(async pm => {
+        const pmOpusCost = await calculateTokenCost(this.config.costTracker, pm.tokensOpus, 'opus');
+        const pmSonnetCost = await calculateTokenCost(this.config.costTracker, pm.tokensSonnet, 'sonnet');
+        return {
+          projectId: pm.projectId, projectName: pm.projectName,
+          opusCost: pmOpusCost, sonnetCost: pmSonnetCost,
+          totalCost: pmOpusCost + pmSonnetCost, completionRate: pm.completionRate,
+        };
       }));
 
-      res.json({
-        system: systemMetrics,
-        costBreakdown,
-        projectCosts,
-      });
+      res.json({ system: systemMetrics, costBreakdown, projectCosts });
     } catch (error) {
       console.error('Error getting metrics:', error);
       res.status(500).json({ error: 'Failed to get metrics' });
     }
   }
 
-  /**
-   * GET /api/recommendations - Get current recommendations
-   */
   private async handleGetRecommendations(_req: Request, res: Response): Promise<void> {
     try {
       const projectMetrics = await this.config.metricsCollector.collectAllProjectMetrics();
@@ -356,30 +284,22 @@ export class DashboardServer {
 
       const report = this.config.recommendationEngine.generateReport(projectMetrics, systemMetrics);
 
-      // Convert Map to array for JSON serialization
       const recommendations: Recommendation[] = [];
       for (const [, recs] of report.projectRecommendations) {
         recommendations.push(...recs);
       }
       recommendations.push(...report.systemRecommendations);
 
-      // Sort by priority
       const priorityOrder = { critical: 0, warning: 1, info: 2, positive: 3 };
       recommendations.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
 
-      res.json({
-        recommendations,
-        actionItems: report.actionItems,
-      });
+      res.json({ recommendations, actionItems: report.actionItems });
     } catch (error) {
       console.error('Error getting recommendations:', error);
       res.status(500).json({ error: 'Failed to get recommendations' });
     }
   }
 
-  /**
-   * POST /api/tasks/:id/priority - Update task priority
-   */
   private async handleUpdateTaskPriority(req: Request, res: Response): Promise<void> {
     try {
       const taskId = req.params.id as string;
@@ -398,8 +318,6 @@ export class DashboardServer {
 
       const updated = await this.config.taskRepo.update(taskId, { priority });
       res.json(updated);
-
-      // Broadcast update to SSE clients
       this.broadcastEvent('taskUpdated', { taskId, priority });
     } catch (error) {
       console.error('Error updating task priority:', error);
@@ -407,9 +325,6 @@ export class DashboardServer {
     }
   }
 
-  /**
-   * POST /api/projects/:id/pause - Pause a project
-   */
   private async handlePauseProject(req: Request, res: Response): Promise<void> {
     try {
       const projectId = req.params.id as string;
@@ -421,8 +336,6 @@ export class DashboardServer {
 
       const updated = await this.config.projectRepo.updateStatus(projectId, 'paused');
       res.json(updated);
-
-      // Broadcast update to SSE clients
       this.broadcastEvent('projectPaused', { projectId });
     } catch (error) {
       console.error('Error pausing project:', error);
@@ -430,9 +343,6 @@ export class DashboardServer {
     }
   }
 
-  /**
-   * POST /api/projects/:id/resume - Resume a paused project
-   */
   private async handleResumeProject(req: Request, res: Response): Promise<void> {
     try {
       const projectId = req.params.id as string;
@@ -444,8 +354,6 @@ export class DashboardServer {
 
       const updated = await this.config.projectRepo.updateStatus(projectId, 'active');
       res.json(updated);
-
-      // Broadcast update to SSE clients
       this.broadcastEvent('projectResumed', { projectId });
     } catch (error) {
       console.error('Error resuming project:', error);
@@ -453,25 +361,18 @@ export class DashboardServer {
     }
   }
 
-  /**
-   * GET /api/events - Server-Sent Events endpoint
-   */
   private handleSSE(req: Request, res: Response): void {
-    // Set SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
 
-    // Send initial connection event
     res.write('event: connected\n');
     res.write(`data: ${JSON.stringify({ timestamp: new Date().toISOString() })}\n\n`);
 
-    // Track client
     const clientId = `client-${++this.sseClientIdCounter}`;
     this.sseClients.set(clientId, { id: clientId, res });
 
-    // Keep connection alive with periodic heartbeat
     const heartbeat = setInterval(() => {
       if (this.sseClients.has(clientId)) {
         res.write(': heartbeat\n\n');
@@ -480,16 +381,12 @@ export class DashboardServer {
       }
     }, 30000);
 
-    // Handle client disconnect - consolidated into single handler
     req.on('close', () => {
       this.sseClients.delete(clientId);
       clearInterval(heartbeat);
     });
   }
 
-  /**
-   * Broadcast an event to all SSE clients
-   */
   public broadcastEvent(eventType: string, data: unknown): void {
     const message = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
 
@@ -503,24 +400,9 @@ export class DashboardServer {
     }
   }
 
-  /**
-   * Calculate cost in USD for token usage
-   */
-  private calculateCost(tokens: number, model: 'opus' | 'sonnet'): number {
-    // Assume 50/50 input/output split for simplicity
-    const inputTokens = tokens / 2;
-    const outputTokens = tokens / 2;
-
-    const costs = TOKEN_COSTS[model];
-    return (inputTokens * costs.input + outputTokens * costs.output) / 1_000_000;
-  }
-
-  /**
-   * Start the dashboard server
-   */
   async start(): Promise<void> {
     if (this.server) {
-      return; // Already running
+      return;
     }
 
     return new Promise((resolve, reject) => {
@@ -542,15 +424,11 @@ export class DashboardServer {
     });
   }
 
-  /**
-   * Stop the dashboard server
-   */
   async stop(): Promise<void> {
     if (!this.server) {
       return;
     }
 
-    // Close all SSE connections
     for (const [, client] of this.sseClients) {
       try {
         client.res.end();
@@ -573,23 +451,14 @@ export class DashboardServer {
     });
   }
 
-  /**
-   * Check if server is running
-   */
   isRunning(): boolean {
     return this.server !== null;
   }
 
-  /**
-   * Get the Express app instance (for testing)
-   */
   getApp(): Application {
     return this.app;
   }
 
-  /**
-   * Get the server address (for testing)
-   */
   getAddress(): AddressInfo | null {
     if (!this.server) {
       return null;

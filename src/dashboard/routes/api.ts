@@ -6,6 +6,7 @@ import { RecommendationEngine, Recommendation } from '../../reporter/recommendat
 import { AgentManager } from '../../agent/manager.js';
 import { Scheduler } from '../../scheduler/scheduler.js';
 import { CapacityStats } from '../../scheduler/capacity-tracker.js';
+import { CostTracker } from '../../analytics/cost-tracker.js';
 
 /**
  * System status response interface
@@ -37,29 +38,27 @@ export interface ProjectSummary {
 }
 
 /**
- * Cost calculation constants (USD per 1M tokens)
+ * Calculate cost in USD for total token usage via CostTracker.
+ * Splits total tokens using CostTracker's default input/output ratio (83%/17%)
+ * since MetricsCollector only provides aggregate token counts per model.
  */
-const TOKEN_COSTS = {
-  opus: {
-    input: 15.00,
-    output: 75.00,
-  },
-  sonnet: {
-    input: 3.00,
-    output: 15.00,
-  },
-};
-
-/**
- * Calculate cost in USD for token usage
- * Assumes 50/50 input/output split for simplicity
- */
-export function calculateCost(tokens: number, model: 'opus' | 'sonnet'): number {
+export async function calculateTokenCost(
+  costTracker: CostTracker,
+  tokens: number,
+  model: string
+): Promise<number> {
   if (tokens === 0) return 0;
-  const inputTokens = tokens / 2;
-  const outputTokens = tokens / 2;
-  const costs = TOKEN_COSTS[model];
-  return (inputTokens * costs.input + outputTokens * costs.output) / 1_000_000;
+  try {
+    const totalDefault = CostTracker.DEFAULT_AVG_INPUT_TOKENS + CostTracker.DEFAULT_AVG_OUTPUT_TOKENS;
+    const inputRatio = CostTracker.DEFAULT_AVG_INPUT_TOKENS / totalDefault;
+    const inputTokens = Math.round(tokens * inputRatio);
+    const outputTokens = tokens - inputTokens;
+    const result = await costTracker.calculateCost(model, inputTokens, outputTokens);
+    return result.totalCost;
+  } catch (error) {
+    console.warn(`CostTracker pricing lookup failed for model "${model}":`, error);
+    return 0;
+  }
 }
 
 type BroadcastEventFn = (eventType: string, data: unknown) => void;
@@ -70,15 +69,16 @@ type BroadcastEventFn = (eventType: string, data: unknown) => void;
 export function createStatusHandler(
   scheduler: Scheduler,
   metricsCollector: MetricsCollector,
-  startTime: Date | null
+  startTime: Date | null,
+  costTracker: CostTracker
 ): RequestHandler {
   return async (_req: Request, res: Response): Promise<void> => {
     try {
       const schedulerStats = scheduler.getStats();
       const systemMetrics = await metricsCollector.collectSystemMetrics();
 
-      const opusCost = calculateCost(systemMetrics.totalTokensOpus, 'opus');
-      const sonnetCost = calculateCost(systemMetrics.totalTokensSonnet, 'sonnet');
+      const opusCost = await calculateTokenCost(costTracker, systemMetrics.totalTokensOpus, 'opus');
+      const sonnetCost = await calculateTokenCost(costTracker, systemMetrics.totalTokensSonnet, 'sonnet');
       const totalCost = opusCost + sonnetCost;
 
       const status: SystemStatus = {
@@ -107,15 +107,19 @@ export function createStatusHandler(
 export function createProjectsHandler(
   projectRepo: ProjectRepository,
   metricsCollector: MetricsCollector,
-  agentManager: AgentManager
+  agentManager: AgentManager,
+  costTracker: CostTracker
 ): RequestHandler {
   return async (_req: Request, res: Response): Promise<void> => {
     try {
       const projects = await projectRepo.listActive();
       const projectMetrics = await metricsCollector.collectAllProjectMetrics();
 
-      const summaries: ProjectSummary[] = projects.map(project => {
+      const summaries: ProjectSummary[] = await Promise.all(projects.map(async project => {
         const metrics = projectMetrics.find(m => m.projectId === project.id);
+
+        const opusCost = await calculateTokenCost(costTracker, metrics?.tokensOpus || 0, 'opus');
+        const sonnetCost = await calculateTokenCost(costTracker, metrics?.tokensSonnet || 0, 'sonnet');
 
         return {
           id: project.id,
@@ -125,10 +129,9 @@ export function createProjectsHandler(
           queuedTasks: metrics?.tasksQueued || 0,
           blockedTasks: metrics?.tasksBlocked || 0,
           roi: metrics?.completionRate || 0,
-          costToday: calculateCost(metrics?.tokensOpus || 0, 'opus') +
-                     calculateCost(metrics?.tokensSonnet || 0, 'sonnet'),
+          costToday: opusCost + sonnetCost,
         };
-      });
+      }));
 
       res.json(summaries);
     } catch (error) {
@@ -232,14 +235,17 @@ export function createTasksHandler(taskRepo: TaskRepository): RequestHandler {
 /**
  * Create handler for GET /api/metrics
  */
-export function createMetricsHandler(metricsCollector: MetricsCollector): RequestHandler {
+export function createMetricsHandler(
+  metricsCollector: MetricsCollector,
+  costTracker: CostTracker
+): RequestHandler {
   return async (_req: Request, res: Response): Promise<void> => {
     try {
       const systemMetrics = await metricsCollector.collectSystemMetrics();
       const projectMetrics = await metricsCollector.collectAllProjectMetrics();
 
-      const opusCost = calculateCost(systemMetrics.totalTokensOpus, 'opus');
-      const sonnetCost = calculateCost(systemMetrics.totalTokensSonnet, 'sonnet');
+      const opusCost = await calculateTokenCost(costTracker, systemMetrics.totalTokensOpus, 'opus');
+      const sonnetCost = await calculateTokenCost(costTracker, systemMetrics.totalTokensSonnet, 'sonnet');
 
       const costBreakdown = {
         opus: {
@@ -253,14 +259,17 @@ export function createMetricsHandler(metricsCollector: MetricsCollector): Reques
         total: opusCost + sonnetCost,
       };
 
-      const projectCosts = projectMetrics.map(pm => ({
-        projectId: pm.projectId,
-        projectName: pm.projectName,
-        opusCost: calculateCost(pm.tokensOpus, 'opus'),
-        sonnetCost: calculateCost(pm.tokensSonnet, 'sonnet'),
-        totalCost: calculateCost(pm.tokensOpus, 'opus') +
-                   calculateCost(pm.tokensSonnet, 'sonnet'),
-        completionRate: pm.completionRate,
+      const projectCosts = await Promise.all(projectMetrics.map(async pm => {
+        const pmOpusCost = await calculateTokenCost(costTracker, pm.tokensOpus, 'opus');
+        const pmSonnetCost = await calculateTokenCost(costTracker, pm.tokensSonnet, 'sonnet');
+        return {
+          projectId: pm.projectId,
+          projectName: pm.projectName,
+          opusCost: pmOpusCost,
+          sonnetCost: pmSonnetCost,
+          totalCost: pmOpusCost + pmSonnetCost,
+          completionRate: pm.completionRate,
+        };
       }));
 
       res.json({

@@ -26,5 +26,5 @@ export {
   createUpdateTaskPriorityHandler,
   createPauseProjectHandler,
   createResumeProjectHandler,
-  calculateCost,
+  calculateTokenCost,
 } from './routes/api.js';

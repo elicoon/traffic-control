@@ -11,7 +11,7 @@ import {
   createUpdateTaskPriorityHandler,
   createPauseProjectHandler,
   createResumeProjectHandler,
-  calculateCost,
+  calculateTokenCost,
 } from './api.js';
 
 // Helper to create mock request/response/next
@@ -32,29 +32,41 @@ function createMockReqRes(params = {}, body = {}) {
   return { req, res, next };
 }
 
+// Mock CostTracker
+const mockCostTracker = {
+  calculateCost: vi.fn().mockResolvedValue({ inputCost: 0, outputCost: 0, totalCost: 0 }),
+  getAllCurrentPricing: vi.fn().mockResolvedValue([]),
+};
+
 describe('API Route Handlers', () => {
-  describe('calculateCost', () => {
-    it('should calculate opus cost correctly', () => {
-      // 1M tokens with 50/50 split
-      // Input: 500k * $15/M = $7.50
-      // Output: 500k * $75/M = $37.50
-      // Total: $45
-      const cost = calculateCost(1_000_000, 'opus');
-      expect(cost).toBeCloseTo(45, 2);
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCostTracker.calculateCost.mockResolvedValue({ inputCost: 0, outputCost: 0, totalCost: 0 });
+  });
+
+  describe('calculateTokenCost', () => {
+    it('should return 0 for 0 tokens', async () => {
+      expect(await calculateTokenCost(mockCostTracker as any, 0, 'opus')).toBe(0);
+      expect(await calculateTokenCost(mockCostTracker as any, 0, 'sonnet')).toBe(0);
+      expect(mockCostTracker.calculateCost).not.toHaveBeenCalled();
     });
 
-    it('should calculate sonnet cost correctly', () => {
-      // 1M tokens with 50/50 split
-      // Input: 500k * $3/M = $1.50
-      // Output: 500k * $15/M = $7.50
-      // Total: $9
-      const cost = calculateCost(1_000_000, 'sonnet');
-      expect(cost).toBeCloseTo(9, 2);
-    });
+    it('should call CostTracker.calculateCost with split tokens', async () => {
+      mockCostTracker.calculateCost.mockResolvedValue({ inputCost: 5, outputCost: 2, totalCost: 7 });
 
-    it('should return 0 for 0 tokens', () => {
-      expect(calculateCost(0, 'opus')).toBe(0);
-      expect(calculateCost(0, 'sonnet')).toBe(0);
+      const result = await calculateTokenCost(mockCostTracker as any, 1_000_000, 'opus');
+
+      expect(result).toBe(7);
+      expect(mockCostTracker.calculateCost).toHaveBeenCalledWith(
+        'opus',
+        expect.any(Number), // inputTokens (83% of 1M)
+        expect.any(Number), // outputTokens (17% of 1M)
+      );
+
+      // Verify the split ratio (83/17)
+      const [, inputTokens, outputTokens] = mockCostTracker.calculateCost.mock.calls[0];
+      expect(inputTokens + outputTokens).toBe(1_000_000);
+      expect(inputTokens).toBeGreaterThan(outputTokens);
     });
   });
 
@@ -82,7 +94,8 @@ describe('API Route Handlers', () => {
       const handler = createStatusHandler(
         mockScheduler as any,
         mockMetricsCollector as any,
-        new Date()
+        new Date(),
+        mockCostTracker as any
       );
 
       const { req, res, next } = createMockReqRes();
@@ -128,7 +141,8 @@ describe('API Route Handlers', () => {
       const handler = createProjectsHandler(
         mockProjectRepo as any,
         mockMetricsCollector as any,
-        mockAgentManager as any
+        mockAgentManager as any,
+        mockCostTracker as any
       );
 
       const { req, res, next } = createMockReqRes();
@@ -273,7 +287,10 @@ describe('API Route Handlers', () => {
         ]),
       };
 
-      const handler = createMetricsHandler(mockMetricsCollector as any);
+      const handler = createMetricsHandler(
+        mockMetricsCollector as any,
+        mockCostTracker as any
+      );
 
       const { req, res, next } = createMockReqRes();
       await handler(req, res, next);
