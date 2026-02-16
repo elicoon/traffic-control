@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   SDKAdapter,
   MODEL_MAP,
+  FALLBACK_PRICING,
+  calculateCostFromTokens,
   getSDKAdapter,
   resetSDKAdapter,
   type TokenUsage,
@@ -99,6 +101,195 @@ describe('SDKAdapter', () => {
       expect(usage.inputTokens).toBe(0);
       expect(usage.outputTokens).toBe(0);
       expect(usage.totalTokens).toBe(0);
+    });
+
+    it('should calculate costUSD from tokens when model is provided', () => {
+      const adapter = new SDKAdapter();
+
+      const result: SDKResultSuccess = {
+        type: 'result',
+        subtype: 'success',
+        duration_ms: 5000,
+        duration_api_ms: 4500,
+        is_error: false,
+        num_turns: 3,
+        result: 'Task completed',
+        total_cost_usd: 0,
+        usage: {
+          input_tokens: 1_000_000,
+          output_tokens: 100_000,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        modelUsage: {},
+        permission_denials: [],
+        uuid: '00000000-0000-0000-0000-000000000000' as `${string}-${string}-${string}-${string}-${string}`,
+        session_id: 'test-session',
+      };
+
+      // Opus: (1M/1M)*15 + (100K/1M)*75 = 15 + 7.5 = 22.5
+      const usage = adapter.extractUsage(result, 'opus');
+      expect(usage.costUSD).toBe(22.5);
+    });
+
+    it('should calculate costUSD for sonnet model', () => {
+      const adapter = new SDKAdapter();
+
+      const result: SDKResultSuccess = {
+        type: 'result',
+        subtype: 'success',
+        duration_ms: 3000,
+        duration_api_ms: 2500,
+        is_error: false,
+        num_turns: 2,
+        result: 'Done',
+        total_cost_usd: 0,
+        usage: {
+          input_tokens: 1_000_000,
+          output_tokens: 100_000,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        modelUsage: {},
+        permission_denials: [],
+        uuid: '00000000-0000-0000-0000-000000000000' as `${string}-${string}-${string}-${string}-${string}`,
+        session_id: 'test-session',
+      };
+
+      // Sonnet: (1M/1M)*3 + (100K/1M)*15 = 3 + 1.5 = 4.5
+      const usage = adapter.extractUsage(result, 'sonnet');
+      expect(usage.costUSD).toBe(4.5);
+    });
+
+    it('should resolve model from session tracking when not passed directly', async () => {
+      const mockQuery = {
+        [Symbol.asyncIterator]: async function* () {},
+        streamInput: vi.fn(),
+        close: vi.fn(),
+      } as unknown as Query;
+
+      const queryFn = vi.fn().mockReturnValue(mockQuery);
+      const adapter = new SDKAdapter(queryFn);
+
+      // Start a query which registers the model for the session
+      await adapter.startQuery('tracked-session', 'Test', {
+        cwd: '/test',
+        model: 'opus',
+      });
+
+      const result: SDKResultSuccess = {
+        type: 'result',
+        subtype: 'success',
+        duration_ms: 5000,
+        duration_api_ms: 4500,
+        is_error: false,
+        num_turns: 3,
+        result: 'Done',
+        total_cost_usd: 0,
+        usage: {
+          input_tokens: 100_000,
+          output_tokens: 10_000,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        modelUsage: {},
+        permission_denials: [],
+        uuid: '00000000-0000-0000-0000-000000000000' as `${string}-${string}-${string}-${string}-${string}`,
+        session_id: 'tracked-session',
+      };
+
+      // Should auto-resolve opus model from session tracking
+      // Opus: (100K/1M)*15 + (10K/1M)*75 = 1.5 + 0.75 = 2.25
+      const usage = adapter.extractUsage(result);
+      expect(usage.costUSD).toBe(2.25);
+    });
+
+    it('should return zero cost for zero tokens even with model', () => {
+      const adapter = new SDKAdapter();
+
+      const result: SDKResultSuccess = {
+        type: 'result',
+        subtype: 'success',
+        duration_ms: 1000,
+        duration_api_ms: 900,
+        is_error: false,
+        num_turns: 1,
+        result: 'Done',
+        total_cost_usd: 0,
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        modelUsage: {},
+        permission_denials: [],
+        uuid: '00000000-0000-0000-0000-000000000000' as `${string}-${string}-${string}-${string}-${string}`,
+        session_id: 'test-session',
+      };
+
+      const usage = adapter.extractUsage(result, 'opus');
+      expect(usage.costUSD).toBe(0);
+    });
+
+    it('should fall back to SDK total_cost_usd when model is unknown', () => {
+      const adapter = new SDKAdapter();
+
+      const result: SDKResultSuccess = {
+        type: 'result',
+        subtype: 'success',
+        duration_ms: 1000,
+        duration_api_ms: 900,
+        is_error: false,
+        num_turns: 1,
+        result: 'Done',
+        total_cost_usd: 0.42,
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 500,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        modelUsage: {},
+        permission_denials: [],
+        uuid: '00000000-0000-0000-0000-000000000000' as `${string}-${string}-${string}-${string}-${string}`,
+        session_id: 'test-session',
+      };
+
+      // No model provided and no session tracking — falls back to SDK value
+      const usage = adapter.extractUsage(result);
+      expect(usage.costUSD).toBe(0.42);
+    });
+  });
+
+  describe('calculateCostFromTokens', () => {
+    it('should calculate opus cost correctly', () => {
+      // (1M/1M)*15 + (1M/1M)*75 = 15 + 75 = 90
+      expect(calculateCostFromTokens('opus', 1_000_000, 1_000_000)).toBe(90);
+    });
+
+    it('should calculate sonnet cost correctly', () => {
+      // (1M/1M)*3 + (1M/1M)*15 = 3 + 15 = 18
+      expect(calculateCostFromTokens('sonnet', 1_000_000, 1_000_000)).toBe(18);
+    });
+
+    it('should calculate haiku cost correctly', () => {
+      // (1M/1M)*0.80 + (1M/1M)*4 = 0.80 + 4 = 4.80
+      expect(calculateCostFromTokens('haiku', 1_000_000, 1_000_000)).toBe(4.80);
+    });
+
+    it('should return 0 for unknown model', () => {
+      expect(calculateCostFromTokens('unknown-model', 1_000_000, 1_000_000)).toBe(0);
+    });
+
+    it('should return 0 for zero tokens', () => {
+      expect(calculateCostFromTokens('opus', 0, 0)).toBe(0);
+    });
+
+    it('should handle realistic token counts', () => {
+      // Typical session: 50K input, 10K output on opus
+      // (50K/1M)*15 + (10K/1M)*75 = 0.75 + 0.75 = 1.50
+      expect(calculateCostFromTokens('opus', 50_000, 10_000)).toBe(1.5);
     });
   });
 
