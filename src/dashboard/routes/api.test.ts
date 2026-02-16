@@ -68,6 +68,20 @@ describe('API Route Handlers', () => {
       expect(inputTokens + outputTokens).toBe(1_000_000);
       expect(inputTokens).toBeGreaterThan(outputTokens);
     });
+
+    it('should return 0 and warn when CostTracker throws', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mockCostTracker.calculateCost.mockRejectedValue(new Error('No pricing found for model: opus'));
+
+      const result = await calculateTokenCost(mockCostTracker as any, 500_000, 'opus');
+
+      expect(result).toBe(0);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('CostTracker pricing lookup failed'),
+        expect.any(Error),
+      );
+      warnSpy.mockRestore();
+    });
   });
 
   describe('createStatusHandler', () => {
