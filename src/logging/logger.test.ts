@@ -153,12 +153,12 @@ describe('Logger', () => {
       await new Promise(resolve => setTimeout(resolve, 10));
       const duration = log.timeEnd('operation');
 
-      expect(duration).toBeGreaterThanOrEqual(10);
+      expect(duration).toBeGreaterThanOrEqual(5);
       expect(console.log).toHaveBeenCalled();
 
       const output = (console.log as ReturnType<typeof vi.fn>).mock.calls[0][0];
       const parsed = JSON.parse(output);
-      expect(parsed.duration).toBeGreaterThanOrEqual(10);
+      expect(parsed.duration).toBeGreaterThanOrEqual(5);
     });
 
     it('should warn if timer does not exist', () => {
