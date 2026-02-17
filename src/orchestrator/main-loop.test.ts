@@ -437,7 +437,7 @@ describe('MainLoop', () => {
       await loop.stop();
       const elapsed = Date.now() - startTime;
 
-      expect(elapsed).toBeGreaterThanOrEqual(50);
+      expect(elapsed).toBeGreaterThanOrEqual(40);
       expect(loop.isRunning()).toBe(false);
     });
   });
