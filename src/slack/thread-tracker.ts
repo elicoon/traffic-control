@@ -31,6 +31,8 @@ export interface SlackThread {
   createdAt: Date;
   /** When the last activity occurred */
   lastActivityAt: Date;
+  /** When the thread was resolved (undefined if not resolved) */
+  resolvedAt?: Date;
   /** Messages in this thread */
   messages: ThreadMessage[];
 }
@@ -64,6 +66,49 @@ export class ThreadTracker {
   private threads: Map<string, SlackThread> = new Map();
   /** Map of taskId -> threadTs for quick lookup */
   private taskToThread: Map<string, string> = new Map();
+  /** TTL for resolved threads in milliseconds (default: 1 hour) */
+  private resolvedThreadTTL: number;
+  /** Cleanup interval timer */
+  private cleanupInterval?: NodeJS.Timeout;
+
+  constructor(resolvedThreadTTL: number = 3600000) {
+    this.resolvedThreadTTL = resolvedThreadTTL;
+    // Run cleanup every 15 minutes
+    this.cleanupInterval = setInterval(() => this.cleanupExpiredThreads(), 900000);
+  }
+
+  /**
+   * Stops the cleanup interval. Should be called when the tracker is no longer needed.
+   */
+  destroy(): void {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = undefined;
+    }
+  }
+
+  /**
+   * Removes resolved threads that have exceeded their TTL.
+   * Returns the number of threads removed.
+   */
+  cleanupExpiredThreads(): number {
+    const now = Date.now();
+    let removedCount = 0;
+
+    for (const [threadTs, thread] of this.threads.entries()) {
+      // Only clean up resolved threads
+      if (thread.status === 'resolved' && thread.resolvedAt) {
+        const age = now - thread.resolvedAt.getTime();
+        if (age > this.resolvedThreadTTL) {
+          this.threads.delete(threadTs);
+          this.taskToThread.delete(thread.taskId);
+          removedCount++;
+        }
+      }
+    }
+
+    return removedCount;
+  }
 
   /**
    * Creates a new thread entry.
@@ -173,7 +218,13 @@ export class ThreadTracker {
    * Returns true if the thread was found and resolved.
    */
   resolveThread(threadTs: string): boolean {
-    return this.updateStatus(threadTs, 'resolved');
+    const thread = this.threads.get(threadTs);
+    if (!thread) return false;
+
+    thread.status = 'resolved';
+    thread.resolvedAt = new Date();
+    thread.lastActivityAt = new Date();
+    return true;
   }
 
   /**
