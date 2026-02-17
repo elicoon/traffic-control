@@ -359,5 +359,32 @@ describe('RecommendationEngine', () => {
       // Should trigger with default threshold of 5
       expect(recommendations.some(r => r.type === 'high_velocity')).toBe(true);
     });
+
+    it('should use custom system-level thresholds', () => {
+      const customEngine = new RecommendationEngine({
+        lowOpusUtilization: 50,
+        highBlockedSystem: 10
+      });
+
+      const systemMetrics: SystemMetrics = {
+        totalProjects: 2,
+        totalTasksQueued: 10,
+        totalTasksInProgress: 2,
+        totalTasksBlocked: 8, // Below custom threshold of 10
+        totalTasksCompletedToday: 3,
+        totalTasksCompletedThisWeek: 15,
+        totalTokensOpus: 5000,
+        totalTokensSonnet: 10000,
+        totalSessions: 10,
+        opusUtilization: 60, // Above custom threshold of 50
+        sonnetUtilization: 70
+      };
+
+      const recommendations = customEngine.analyzeSystemMetrics(systemMetrics);
+
+      // Should NOT trigger with custom thresholds
+      expect(recommendations.some(r => r.type === 'low_opus_utilization')).toBe(false);
+      expect(recommendations.some(r => r.type === 'high_blocked_count')).toBe(false);
+    });
   });
 });
