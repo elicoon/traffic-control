@@ -10,7 +10,7 @@
  * 3. Default to CLI (assumes Max subscription)
  */
 
-import { IAgentAdapter, ISDKAdapter, SDKAdapter, getSDKAdapter } from './sdk-adapter.js';
+import { IAgentAdapter, SDKAdapter, getSDKAdapter } from './sdk-adapter.js';
 import { CLIAdapter, getCLIAdapter } from './cli-adapter.js';
 import { logger } from '../logging/index.js';
 

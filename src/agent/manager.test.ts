@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AgentManager } from './manager.js';
-import type { ISDKAdapter, ActiveQuery, SDKAdapterConfig, TokenUsage } from './sdk-adapter.js';
+import type { IAgentAdapter, ActiveQuery, SDKAdapterConfig, TokenUsage } from './sdk-adapter.js';
 import type { Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { AgentEvent } from './types.js';
 
 /**
  * Create a mock SDK adapter for testing
  */
-function createMockAdapter(): ISDKAdapter & {
+function createMockAdapter(): IAgentAdapter & {
   mockStartQuery: ReturnType<typeof vi.fn>;
   mockActiveQuery: ActiveQuery;
   onMessageCallback?: (message: SDKMessage, sessionId: string) => void;
