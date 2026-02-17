@@ -1183,6 +1183,9 @@ describe('MainLoop Startup Smoke Test', () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tc-startup-test-'));
     stateFilePath = path.join(tempDir, 'startup-state.json');
 
+    // Set environment variable for Slack notifications
+    process.env.TC_SLACK_CHANNEL = 'C12345TEST';
+
     // Mock Slack integration
     mockSlack = {
       sendMessage: vi.fn().mockResolvedValue('msg-123'),
@@ -1233,10 +1236,55 @@ describe('MainLoop Startup Smoke Test', () => {
     }
     vi.useRealTimers();
     await fs.rm(tempDir, { recursive: true, force: true });
+    // Clean up environment variable
+    delete process.env.TC_SLACK_CHANNEL;
   });
 
   it('should complete full startup sequence: init → start → tick → stop', async () => {
-    // Test will be implemented in next steps
-    expect(true).toBe(false); // Placeholder to make it fail
+    // ASSERTION 1: MainLoop should initialize in stopped state
+    expect(mainLoop.isRunning()).toBe(false);
+    expect(mainLoop.isPaused()).toBe(false);
+
+    // Start the orchestrator
+    const startPromise = mainLoop.start();
+    await startPromise;
+
+    // ASSERTION 2: After start(), MainLoop should be running
+    expect(mainLoop.isRunning()).toBe(true);
+    expect(mainLoop.isPaused()).toBe(false);
+
+    // ASSERTION 3: Safety systems should be initialized
+    const stats = mainLoop.getStats();
+    expect(stats.safety.circuitBreakerState).toBe('closed');
+    expect(stats.safety.circuitBreakerTripped).toBe(false);
+
+    // ASSERTION 4: Capacity tracking should be synced
+    expect(mockDeps.scheduler.syncCapacity).toHaveBeenCalledTimes(1);
+
+    // ASSERTION 5: Slack notification should be sent on startup
+    expect(mockSlack.sendMessage).toHaveBeenCalled();
+    const startupCall = (mockSlack.sendMessage as any).mock.calls[0];
+    expect(startupCall[1]).toContain('TrafficControl Started');
+
+    // Advance timer to trigger one tick
+    await vi.advanceTimersByTimeAsync(config.pollIntervalMs + 10);
+
+    // ASSERTION 6: First tick should attempt to schedule if capacity available
+    expect(mockDeps.scheduler.canSchedule).toHaveBeenCalled();
+
+    // Stop the orchestrator
+    await mainLoop.stop();
+
+    // ASSERTION 7: After stop(), MainLoop should be stopped
+    expect(mainLoop.isRunning()).toBe(false);
+
+    // ASSERTION 8: Slack shutdown notification should be sent
+    expect(mockSlack.sendMessage).toHaveBeenCalledTimes(2);
+    const shutdownCall = (mockSlack.sendMessage as any).mock.calls[1];
+    expect(shutdownCall[1]).toContain('TrafficControl Stopped');
+
+    // ASSERTION 9: Circuit breaker should be destroyed on shutdown
+    // (no direct way to test this, but ensuring no errors during stop is sufficient)
+    expect(mainLoop.isRunning()).toBe(false);
   });
 });
