@@ -447,4 +447,273 @@ describe('ThreadTracker', () => {
       expect(updated?.lastActivityAt.getTime()).toBeGreaterThan(originalActivity);
     });
   });
+
+  describe('TTL-based cleanup', () => {
+    it('should track resolvedAt timestamp when thread is resolved', () => {
+      tracker.createThread({
+        threadTs: '1234567890.123456',
+        taskId: 'task-1',
+        projectName: 'TestProject',
+        agentId: 'agent-1'
+      });
+
+      const before = Date.now();
+      tracker.resolveThread('1234567890.123456');
+      const after = Date.now();
+
+      const thread = tracker.getByThreadTs('1234567890.123456');
+      expect(thread?.resolvedAt).toBeDefined();
+      expect(thread?.resolvedAt!.getTime()).toBeGreaterThanOrEqual(before);
+      expect(thread?.resolvedAt!.getTime()).toBeLessThanOrEqual(after);
+    });
+
+    it('should not set resolvedAt for non-resolved threads', () => {
+      tracker.createThread({
+        threadTs: '1234567890.123456',
+        taskId: 'task-1',
+        projectName: 'TestProject',
+        agentId: 'agent-1'
+      });
+
+      const thread = tracker.getByThreadTs('1234567890.123456');
+      expect(thread?.resolvedAt).toBeUndefined();
+    });
+
+    it('should remove resolved threads older than TTL', async () => {
+      // Create tracker with 100ms TTL
+      const shortTtlTracker = new ThreadTracker(100);
+
+      shortTtlTracker.createThread({
+        threadTs: '1234567890.123456',
+        taskId: 'task-1',
+        projectName: 'TestProject',
+        agentId: 'agent-1'
+      });
+
+      shortTtlTracker.resolveThread('1234567890.123456');
+
+      // Wait for TTL to expire
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      const removed = shortTtlTracker.cleanupExpiredThreads();
+      expect(removed).toBe(1);
+
+      const thread = shortTtlTracker.getByThreadTs('1234567890.123456');
+      expect(thread).toBeUndefined();
+
+      shortTtlTracker.destroy();
+    });
+
+    it('should not remove active threads regardless of age', async () => {
+      const shortTtlTracker = new ThreadTracker(100);
+
+      shortTtlTracker.createThread({
+        threadTs: '1234567890.123456',
+        taskId: 'task-1',
+        projectName: 'TestProject',
+        agentId: 'agent-1',
+        status: 'active'
+      });
+
+      // Wait longer than TTL
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      const removed = shortTtlTracker.cleanupExpiredThreads();
+      expect(removed).toBe(0);
+
+      const thread = shortTtlTracker.getByThreadTs('1234567890.123456');
+      expect(thread).toBeDefined();
+
+      shortTtlTracker.destroy();
+    });
+
+    it('should not remove waiting_response threads regardless of age', async () => {
+      const shortTtlTracker = new ThreadTracker(100);
+
+      shortTtlTracker.createThread({
+        threadTs: '1234567890.123456',
+        taskId: 'task-1',
+        projectName: 'TestProject',
+        agentId: 'agent-1',
+        status: 'waiting_response'
+      });
+
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      const removed = shortTtlTracker.cleanupExpiredThreads();
+      expect(removed).toBe(0);
+
+      const thread = shortTtlTracker.getByThreadTs('1234567890.123456');
+      expect(thread).toBeDefined();
+
+      shortTtlTracker.destroy();
+    });
+
+    it('should not remove recently resolved threads', async () => {
+      const shortTtlTracker = new ThreadTracker(1000);
+
+      shortTtlTracker.createThread({
+        threadTs: '1234567890.123456',
+        taskId: 'task-1',
+        projectName: 'TestProject',
+        agentId: 'agent-1'
+      });
+
+      shortTtlTracker.resolveThread('1234567890.123456');
+
+      // Wait less than TTL
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      const removed = shortTtlTracker.cleanupExpiredThreads();
+      expect(removed).toBe(0);
+
+      const thread = shortTtlTracker.getByThreadTs('1234567890.123456');
+      expect(thread).toBeDefined();
+
+      shortTtlTracker.destroy();
+    });
+
+    it('should remove task-to-thread mapping when cleaning up expired thread', async () => {
+      const shortTtlTracker = new ThreadTracker(100);
+
+      shortTtlTracker.createThread({
+        threadTs: '1234567890.123456',
+        taskId: 'task-1',
+        projectName: 'TestProject',
+        agentId: 'agent-1'
+      });
+
+      shortTtlTracker.resolveThread('1234567890.123456');
+
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      shortTtlTracker.cleanupExpiredThreads();
+
+      const thread = shortTtlTracker.getByTaskId('task-1');
+      expect(thread).toBeUndefined();
+
+      shortTtlTracker.destroy();
+    });
+
+    it('should return correct count of removed threads', async () => {
+      const shortTtlTracker = new ThreadTracker(100);
+
+      // Create 3 threads, resolve 2
+      shortTtlTracker.createThread({
+        threadTs: '1234567890.123456',
+        taskId: 'task-1',
+        projectName: 'TestProject',
+        agentId: 'agent-1'
+      });
+      shortTtlTracker.createThread({
+        threadTs: '1234567890.654321',
+        taskId: 'task-2',
+        projectName: 'TestProject',
+        agentId: 'agent-1'
+      });
+      shortTtlTracker.createThread({
+        threadTs: '1234567890.111111',
+        taskId: 'task-3',
+        projectName: 'TestProject',
+        agentId: 'agent-1'
+      });
+
+      shortTtlTracker.resolveThread('1234567890.123456');
+      shortTtlTracker.resolveThread('1234567890.654321');
+
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      const removed = shortTtlTracker.cleanupExpiredThreads();
+      expect(removed).toBe(2);
+
+      expect(shortTtlTracker.getAllThreads()).toHaveLength(1);
+
+      shortTtlTracker.destroy();
+    });
+
+    it('should handle cleanup with no expired threads', () => {
+      const removed = tracker.cleanupExpiredThreads();
+      expect(removed).toBe(0);
+    });
+  });
+
+  describe('stress test - memory stability', () => {
+    it('should handle 1000+ thread lifecycle operations without memory leak', async () => {
+      const shortTtlTracker = new ThreadTracker(50);
+      const operations = 1100;
+
+      // Create and resolve many threads
+      for (let i = 0; i < operations; i++) {
+        shortTtlTracker.createThread({
+          threadTs: `1234567890.${i}`,
+          taskId: `task-${i}`,
+          projectName: 'TestProject',
+          agentId: 'agent-1'
+        });
+        shortTtlTracker.resolveThread(`1234567890.${i}`);
+      }
+
+      // All threads are created and resolved
+      expect(shortTtlTracker.getAllThreads()).toHaveLength(operations);
+
+      // Wait for TTL to expire
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Cleanup should remove all resolved threads
+      const removed = shortTtlTracker.cleanupExpiredThreads();
+      expect(removed).toBe(operations);
+
+      // Memory should be empty
+      expect(shortTtlTracker.getAllThreads()).toHaveLength(0);
+
+      shortTtlTracker.destroy();
+    }, 10000); // 10 second timeout for stress test
+
+    it('should maintain active threads while cleaning up resolved ones', async () => {
+      const shortTtlTracker = new ThreadTracker(50);
+
+      // Create mix of active and resolved threads
+      for (let i = 0; i < 500; i++) {
+        shortTtlTracker.createThread({
+          threadTs: `1234567890.${i}`,
+          taskId: `task-${i}`,
+          projectName: 'TestProject',
+          agentId: 'agent-1',
+          status: i % 2 === 0 ? 'active' : 'resolved'
+        });
+
+        if (i % 2 !== 0) {
+          shortTtlTracker.resolveThread(`1234567890.${i}`);
+        }
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      const removed = shortTtlTracker.cleanupExpiredThreads();
+      expect(removed).toBe(250); // Half were resolved
+
+      const remaining = shortTtlTracker.getAllThreads();
+      expect(remaining).toHaveLength(250); // Half remain (active)
+      expect(remaining.every(t => t.status === 'active')).toBe(true);
+
+      shortTtlTracker.destroy();
+    }, 10000);
+  });
+
+  describe('destroy', () => {
+    it('should clear the cleanup interval', () => {
+      const testTracker = new ThreadTracker();
+      expect((testTracker as any).cleanupInterval).toBeDefined();
+
+      testTracker.destroy();
+      expect((testTracker as any).cleanupInterval).toBeUndefined();
+    });
+
+    it('should be safe to call destroy multiple times', () => {
+      const testTracker = new ThreadTracker();
+      testTracker.destroy();
+      testTracker.destroy();
+      expect((testTracker as any).cleanupInterval).toBeUndefined();
+    });
+  });
 });
