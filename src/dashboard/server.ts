@@ -21,6 +21,7 @@ import {
   createUpdateTaskPriorityHandler,
   createPauseProjectHandler,
   createResumeProjectHandler,
+  createHealthHandler,
 } from './routes/api.js';
 import { logger } from '../logging/index.js';
 
