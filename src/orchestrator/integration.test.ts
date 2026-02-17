@@ -1339,4 +1339,58 @@ describe('MainLoop Startup Smoke Test', () => {
     // MainLoop should not be running
     expect(unhealthyMainLoop.isRunning()).toBe(false);
   });
+
+  it('should run pre-flight checks when enabled', async () => {
+    const configWithPreFlight = {
+      ...config,
+      runPreFlightChecks: true,
+      requirePreFlightConfirmation: false, // Auto-approve for test
+      preFlightConfig: {
+        skipSlack: true,
+      },
+    };
+
+    const preFlightMainLoop = new MainLoop(configWithPreFlight, mockDeps);
+    preFlightMainLoop.setSlackIntegration(mockSlack);
+
+    // Spy on PreFlightChecker to mock successful checks
+    const PreFlightCheckerModule = await import('./pre-flight.js');
+    const originalPreFlightChecker = PreFlightCheckerModule.PreFlightChecker;
+
+    // Create a mock runChecks method
+    const mockRunChecks = vi.fn().mockResolvedValue({
+      passed: true,
+      queuedTaskCount: 0,
+      testDataDetected: false,
+      unconfirmedPriorityCount: 0,
+      warnings: [],
+      estimatedCost: {
+        opusCost: 0,
+        sonnetCost: 0,
+        haikuCost: 0,
+        totalCost: 0,
+        breakdown: [],
+      },
+    });
+
+    // Spy on the constructor and patch runChecks
+    vi.spyOn(PreFlightCheckerModule, 'PreFlightChecker').mockImplementation(function(client: any, config: any, deps: any) {
+      const instance = new originalPreFlightChecker(client, config, deps);
+      instance.runChecks = mockRunChecks;
+      return instance;
+    } as any);
+
+    await preFlightMainLoop.start();
+
+    // ASSERTIONS
+    expect(mockRunChecks).toHaveBeenCalledTimes(1);
+    expect(preFlightMainLoop.getLastPreFlightResult()).not.toBeNull();
+    expect(preFlightMainLoop.getLastPreFlightResult()?.passed).toBe(true);
+    expect(preFlightMainLoop.isRunning()).toBe(true);
+
+    await preFlightMainLoop.stop();
+
+    // Restore the original constructor
+    vi.restoreAllMocks();
+  });
 });
