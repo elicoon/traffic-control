@@ -12,6 +12,9 @@ import { Scheduler, SchedulerStats } from '../scheduler/scheduler.js';
 import { CapacityStats } from '../scheduler/capacity-tracker.js';
 import { CostTracker } from '../analytics/cost-tracker.js';
 import { calculateTokenCost } from './routes/api.js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('DashboardServer');
 
 // Get __dirname equivalent for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -127,7 +130,7 @@ export class DashboardServer {
     this.app.post('/api/projects/:id/resume', this.handleResumeProject.bind(this));
 
     this.app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-      console.error('Dashboard server error:', err);
+      log.error('Dashboard server error', err);
       res.status(500).json({ error: 'Internal server error' });
     });
   }
@@ -155,7 +158,7 @@ export class DashboardServer {
 
       res.json(status);
     } catch (error) {
-      console.error('Error getting status:', error);
+      log.error('Error getting status', error as Error);
       res.status(500).json({ error: 'Failed to get system status' });
     }
   }
@@ -185,7 +188,7 @@ export class DashboardServer {
 
       res.json(summaries);
     } catch (error) {
-      console.error('Error getting projects:', error);
+      log.error('Error getting projects', error as Error);
       res.status(500).json({ error: 'Failed to get projects' });
     }
   }
@@ -204,7 +207,7 @@ export class DashboardServer {
 
       res.json({ project, metrics, tasks });
     } catch (error) {
-      console.error('Error getting project:', error);
+      log.error('Error getting project', error as Error);
       res.status(500).json({ error: 'Failed to get project details' });
     }
   }
@@ -231,7 +234,7 @@ export class DashboardServer {
 
       res.json(agentInfo);
     } catch (error) {
-      console.error('Error getting agents:', error);
+      log.error('Error getting agents', error as Error);
       res.status(500).json({ error: 'Failed to get agents' });
     }
   }
@@ -241,7 +244,7 @@ export class DashboardServer {
       const tasks = await this.config.taskRepo.getQueued();
       res.json(tasks);
     } catch (error) {
-      console.error('Error getting tasks:', error);
+      log.error('Error getting tasks', error as Error);
       res.status(500).json({ error: 'Failed to get tasks' });
     }
   }
@@ -272,7 +275,7 @@ export class DashboardServer {
 
       res.json({ system: systemMetrics, costBreakdown, projectCosts });
     } catch (error) {
-      console.error('Error getting metrics:', error);
+      log.error('Error getting metrics', error as Error);
       res.status(500).json({ error: 'Failed to get metrics' });
     }
   }
@@ -295,7 +298,7 @@ export class DashboardServer {
 
       res.json({ recommendations, actionItems: report.actionItems });
     } catch (error) {
-      console.error('Error getting recommendations:', error);
+      log.error('Error getting recommendations', error as Error);
       res.status(500).json({ error: 'Failed to get recommendations' });
     }
   }
@@ -320,7 +323,7 @@ export class DashboardServer {
       res.json(updated);
       this.broadcastEvent('taskUpdated', { taskId, priority });
     } catch (error) {
-      console.error('Error updating task priority:', error);
+      log.error('Error updating task priority', error as Error);
       res.status(500).json({ error: 'Failed to update task priority' });
     }
   }
@@ -338,7 +341,7 @@ export class DashboardServer {
       res.json(updated);
       this.broadcastEvent('projectPaused', { projectId });
     } catch (error) {
-      console.error('Error pausing project:', error);
+      log.error('Error pausing project', error as Error);
       res.status(500).json({ error: 'Failed to pause project' });
     }
   }
@@ -356,7 +359,7 @@ export class DashboardServer {
       res.json(updated);
       this.broadcastEvent('projectResumed', { projectId });
     } catch (error) {
-      console.error('Error resuming project:', error);
+      log.error('Error resuming project', error as Error);
       res.status(500).json({ error: 'Failed to resume project' });
     }
   }
@@ -394,7 +397,7 @@ export class DashboardServer {
       try {
         client.res.write(message);
       } catch (error) {
-        console.error(`Failed to send to client ${client.id}:`, error);
+        log.error(`Failed to send to client ${client.id}`, error as Error);
         this.sseClients.delete(client.id);
       }
     }
@@ -411,7 +414,7 @@ export class DashboardServer {
           this.startTime = new Date();
           const address = this.server?.address();
           const port = typeof address === 'object' && address ? address.port : this.config.port;
-          console.log(`Dashboard server started on port ${port}`);
+          log.info(`Dashboard server started on port ${port}`);
           resolve();
         });
 
