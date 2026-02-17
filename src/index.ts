@@ -1,8 +1,14 @@
 import 'dotenv/config';
+import { assertEnv } from './config/env-validator.js';
 import { Orchestrator } from './orchestrator.js';
+import { logger } from './logging/index.js';
+
+const log = logger.child('Main');
 
 async function main() {
-  console.log('TrafficControl Phase 1 - Foundation');
+  assertEnv();
+
+  log.info('TrafficControl starting', { phase: 'foundation' });
 
   const orchestrator = new Orchestrator();
 
