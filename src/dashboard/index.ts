@@ -13,7 +13,7 @@
  */
 
 export { DashboardServer } from './server.js';
-export type { DashboardServerConfig, SystemStatus, ProjectSummary } from './server.js';
+export type { DashboardServerConfig } from './server.js';
 
 export {
   createStatusHandler,

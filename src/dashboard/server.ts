@@ -3,15 +3,25 @@ import { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ProjectRepository, Project } from '../db/repositories/projects.js';
-import { TaskRepository, Task } from '../db/repositories/tasks.js';
-import { MetricsCollector, SystemMetrics, ProjectMetrics } from '../reporter/metrics-collector.js';
-import { RecommendationEngine, RecommendationReport, Recommendation } from '../reporter/recommendation-engine.js';
+import { ProjectRepository } from '../db/repositories/projects.js';
+import { TaskRepository } from '../db/repositories/tasks.js';
+import { MetricsCollector } from '../reporter/metrics-collector.js';
+import { RecommendationEngine } from '../reporter/recommendation-engine.js';
 import { AgentManager } from '../agent/manager.js';
-import { Scheduler, SchedulerStats } from '../scheduler/scheduler.js';
-import { CapacityStats } from '../scheduler/capacity-tracker.js';
+import { Scheduler } from '../scheduler/scheduler.js';
 import { CostTracker } from '../analytics/cost-tracker.js';
-import { calculateTokenCost } from './routes/api.js';
+import {
+  createStatusHandler,
+  createProjectsHandler,
+  createProjectHandler,
+  createAgentsHandler,
+  createTasksHandler,
+  createMetricsHandler,
+  createRecommendationsHandler,
+  createUpdateTaskPriorityHandler,
+  createPauseProjectHandler,
+  createResumeProjectHandler,
+} from './routes/api.js';
 import { logger } from '../logging/index.js';
 
 const log = logger.child('DashboardServer');
@@ -32,35 +42,6 @@ export interface DashboardServerConfig {
   agentManager: AgentManager;
   scheduler: Scheduler;
   costTracker: CostTracker;
-}
-
-/**
- * System status response interface
- */
-export interface SystemStatus {
-  running: boolean;
-  uptime: number;
-  capacity: CapacityStats;
-  todayStats: {
-    tasksCompleted: number;
-    tokensUsed: number;
-    costUsd: number;
-    interventions: number;
-  };
-}
-
-/**
- * Project summary for dashboard display
- */
-export interface ProjectSummary {
-  id: string;
-  name: string;
-  status: 'active' | 'paused';
-  activeAgents: number;
-  queuedTasks: number;
-  blockedTasks: number;
-  roi: number;
-  costToday: number;
 }
 
 /**
@@ -112,256 +93,36 @@ export class DashboardServer {
   }
 
   private setupRoutes(): void {
+    const { scheduler, metricsCollector, costTracker, projectRepo, taskRepo,
+            agentManager, recommendationEngine } = this.config;
+    const broadcastEvent = this.broadcastEvent.bind(this);
+
     this.app.get('/', (_req: Request, res: Response) => {
       res.sendFile(path.join(__dirname, 'views', 'index.html'));
     });
 
-    this.app.get('/api/status', this.handleGetStatus.bind(this));
-    this.app.get('/api/projects', this.handleGetProjects.bind(this));
-    this.app.get('/api/projects/:id', this.handleGetProject.bind(this));
-    this.app.get('/api/agents', this.handleGetAgents.bind(this));
-    this.app.get('/api/tasks', this.handleGetTasks.bind(this));
-    this.app.get('/api/metrics', this.handleGetMetrics.bind(this));
-    this.app.get('/api/recommendations', this.handleGetRecommendations.bind(this));
+    // Status handler needs current startTime, so create handler per-request
+    this.app.get('/api/status', (req: Request, res: Response, next: NextFunction) => {
+      const handler = createStatusHandler(scheduler, metricsCollector, this.startTime, costTracker);
+      return handler(req, res, next);
+    });
+
+    this.app.get('/api/projects', createProjectsHandler(projectRepo, metricsCollector, agentManager, costTracker));
+    this.app.get('/api/projects/:id', createProjectHandler(projectRepo, metricsCollector, taskRepo));
+    this.app.get('/api/agents', createAgentsHandler(agentManager, taskRepo));
+    this.app.get('/api/tasks', createTasksHandler(taskRepo));
+    this.app.get('/api/metrics', createMetricsHandler(metricsCollector, costTracker));
+    this.app.get('/api/recommendations', createRecommendationsHandler(metricsCollector, recommendationEngine));
     this.app.get('/api/events', this.handleSSE.bind(this));
 
-    this.app.post('/api/tasks/:id/priority', this.handleUpdateTaskPriority.bind(this));
-    this.app.post('/api/projects/:id/pause', this.handlePauseProject.bind(this));
-    this.app.post('/api/projects/:id/resume', this.handleResumeProject.bind(this));
+    this.app.post('/api/tasks/:id/priority', createUpdateTaskPriorityHandler(taskRepo, broadcastEvent));
+    this.app.post('/api/projects/:id/pause', createPauseProjectHandler(projectRepo, broadcastEvent));
+    this.app.post('/api/projects/:id/resume', createResumeProjectHandler(projectRepo, broadcastEvent));
 
     this.app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
       log.error('Dashboard server error', err);
       res.status(500).json({ error: 'Internal server error' });
     });
-  }
-
-  private async handleGetStatus(_req: Request, res: Response): Promise<void> {
-    try {
-      const schedulerStats = this.config.scheduler.getStats();
-      const systemMetrics = await this.config.metricsCollector.collectSystemMetrics();
-
-      const opusCost = await calculateTokenCost(this.config.costTracker, systemMetrics.totalTokensOpus, 'opus');
-      const sonnetCost = await calculateTokenCost(this.config.costTracker, systemMetrics.totalTokensSonnet, 'sonnet');
-      const totalCost = opusCost + sonnetCost;
-
-      const status: SystemStatus = {
-        running: this.isRunning(),
-        uptime: this.startTime ? Date.now() - this.startTime.getTime() : 0,
-        capacity: schedulerStats.capacity,
-        todayStats: {
-          tasksCompleted: systemMetrics.totalTasksCompletedToday,
-          tokensUsed: systemMetrics.totalTokensOpus + systemMetrics.totalTokensSonnet,
-          costUsd: totalCost,
-          interventions: systemMetrics.totalTasksBlocked,
-        },
-      };
-
-      res.json(status);
-    } catch (error) {
-      log.error('Error getting status', error as Error);
-      res.status(500).json({ error: 'Failed to get system status' });
-    }
-  }
-
-  private async handleGetProjects(_req: Request, res: Response): Promise<void> {
-    try {
-      const projects = await this.config.projectRepo.listActive();
-      const projectMetrics = await this.config.metricsCollector.collectAllProjectMetrics();
-
-      const summaries: ProjectSummary[] = await Promise.all((projects || []).map(async project => {
-        const metrics = (projectMetrics || []).find(m => m.projectId === project.id);
-
-        const opusCost = await calculateTokenCost(this.config.costTracker, metrics?.tokensOpus || 0, 'opus');
-        const sonnetCost = await calculateTokenCost(this.config.costTracker, metrics?.tokensSonnet || 0, 'sonnet');
-
-        return {
-          id: project.id,
-          name: project.name,
-          status: project.status as 'active' | 'paused',
-          activeAgents: metrics?.sessionsCount || 0,
-          queuedTasks: metrics?.tasksQueued || 0,
-          blockedTasks: metrics?.tasksBlocked || 0,
-          roi: metrics?.completionRate || 0,
-          costToday: opusCost + sonnetCost,
-        };
-      }));
-
-      res.json(summaries);
-    } catch (error) {
-      log.error('Error getting projects', error as Error);
-      res.status(500).json({ error: 'Failed to get projects' });
-    }
-  }
-
-  private async handleGetProject(req: Request, res: Response): Promise<void> {
-    try {
-      const projectId = req.params.id as string;
-      const project = await this.config.projectRepo.getById(projectId);
-      if (!project) {
-        res.status(404).json({ error: 'Project not found' });
-        return;
-      }
-
-      const metrics = await this.config.metricsCollector.collectProjectMetrics(project.id);
-      const tasks = await this.config.taskRepo.getByProject(project.id);
-
-      res.json({ project, metrics, tasks });
-    } catch (error) {
-      log.error('Error getting project', error as Error);
-      res.status(500).json({ error: 'Failed to get project details' });
-    }
-  }
-
-  private async handleGetAgents(_req: Request, res: Response): Promise<void> {
-    try {
-      const sessions = this.config.agentManager.getActiveSessions();
-
-      const agentInfo = await Promise.all(
-        sessions.map(async session => {
-          let taskInfo = null;
-          if (session.taskId) {
-            const task = await this.config.taskRepo.getById(session.taskId);
-            if (task) {
-              taskInfo = { id: task.id, title: task.title, projectId: task.project_id };
-            }
-          }
-          return {
-            sessionId: session.id, model: session.model, status: session.status,
-            startedAt: session.startedAt, tokensUsed: session.tokensUsed, task: taskInfo,
-          };
-        })
-      );
-
-      res.json(agentInfo);
-    } catch (error) {
-      log.error('Error getting agents', error as Error);
-      res.status(500).json({ error: 'Failed to get agents' });
-    }
-  }
-
-  private async handleGetTasks(_req: Request, res: Response): Promise<void> {
-    try {
-      const tasks = await this.config.taskRepo.getQueued();
-      res.json(tasks);
-    } catch (error) {
-      log.error('Error getting tasks', error as Error);
-      res.status(500).json({ error: 'Failed to get tasks' });
-    }
-  }
-
-  private async handleGetMetrics(_req: Request, res: Response): Promise<void> {
-    try {
-      const systemMetrics = await this.config.metricsCollector.collectSystemMetrics();
-      const projectMetrics = await this.config.metricsCollector.collectAllProjectMetrics();
-
-      const opusCost = await calculateTokenCost(this.config.costTracker, systemMetrics.totalTokensOpus, 'opus');
-      const sonnetCost = await calculateTokenCost(this.config.costTracker, systemMetrics.totalTokensSonnet, 'sonnet');
-
-      const costBreakdown = {
-        opus: { tokens: systemMetrics.totalTokensOpus, cost: opusCost },
-        sonnet: { tokens: systemMetrics.totalTokensSonnet, cost: sonnetCost },
-        total: opusCost + sonnetCost,
-      };
-
-      const projectCosts = await Promise.all(projectMetrics.map(async pm => {
-        const pmOpusCost = await calculateTokenCost(this.config.costTracker, pm.tokensOpus, 'opus');
-        const pmSonnetCost = await calculateTokenCost(this.config.costTracker, pm.tokensSonnet, 'sonnet');
-        return {
-          projectId: pm.projectId, projectName: pm.projectName,
-          opusCost: pmOpusCost, sonnetCost: pmSonnetCost,
-          totalCost: pmOpusCost + pmSonnetCost, completionRate: pm.completionRate,
-        };
-      }));
-
-      res.json({ system: systemMetrics, costBreakdown, projectCosts });
-    } catch (error) {
-      log.error('Error getting metrics', error as Error);
-      res.status(500).json({ error: 'Failed to get metrics' });
-    }
-  }
-
-  private async handleGetRecommendations(_req: Request, res: Response): Promise<void> {
-    try {
-      const projectMetrics = await this.config.metricsCollector.collectAllProjectMetrics();
-      const systemMetrics = await this.config.metricsCollector.collectSystemMetrics();
-
-      const report = this.config.recommendationEngine.generateReport(projectMetrics, systemMetrics);
-
-      const recommendations: Recommendation[] = [];
-      for (const [, recs] of report.projectRecommendations) {
-        recommendations.push(...recs);
-      }
-      recommendations.push(...report.systemRecommendations);
-
-      const priorityOrder = { critical: 0, warning: 1, info: 2, positive: 3 };
-      recommendations.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
-
-      res.json({ recommendations, actionItems: report.actionItems });
-    } catch (error) {
-      log.error('Error getting recommendations', error as Error);
-      res.status(500).json({ error: 'Failed to get recommendations' });
-    }
-  }
-
-  private async handleUpdateTaskPriority(req: Request, res: Response): Promise<void> {
-    try {
-      const taskId = req.params.id as string;
-      const { priority } = req.body;
-
-      if (typeof priority !== 'number') {
-        res.status(400).json({ error: 'Priority must be a number' });
-        return;
-      }
-
-      const task = await this.config.taskRepo.getById(taskId);
-      if (!task) {
-        res.status(404).json({ error: 'Task not found' });
-        return;
-      }
-
-      const updated = await this.config.taskRepo.update(taskId, { priority });
-      res.json(updated);
-      this.broadcastEvent('taskUpdated', { taskId, priority });
-    } catch (error) {
-      log.error('Error updating task priority', error as Error);
-      res.status(500).json({ error: 'Failed to update task priority' });
-    }
-  }
-
-  private async handlePauseProject(req: Request, res: Response): Promise<void> {
-    try {
-      const projectId = req.params.id as string;
-      const project = await this.config.projectRepo.getById(projectId);
-      if (!project) {
-        res.status(404).json({ error: 'Project not found' });
-        return;
-      }
-
-      const updated = await this.config.projectRepo.updateStatus(projectId, 'paused');
-      res.json(updated);
-      this.broadcastEvent('projectPaused', { projectId });
-    } catch (error) {
-      log.error('Error pausing project', error as Error);
-      res.status(500).json({ error: 'Failed to pause project' });
-    }
-  }
-
-  private async handleResumeProject(req: Request, res: Response): Promise<void> {
-    try {
-      const projectId = req.params.id as string;
-      const project = await this.config.projectRepo.getById(projectId);
-      if (!project) {
-        res.status(404).json({ error: 'Project not found' });
-        return;
-      }
-
-      const updated = await this.config.projectRepo.updateStatus(projectId, 'active');
-      res.json(updated);
-      this.broadcastEvent('projectResumed', { projectId });
-    } catch (error) {
-      log.error('Error resuming project', error as Error);
-      res.status(500).json({ error: 'Failed to resume project' });
-    }
   }
 
   private handleSSE(req: Request, res: Response): void {
