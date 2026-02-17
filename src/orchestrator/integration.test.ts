@@ -1330,6 +1330,7 @@ describe('MainLoop Startup Smoke Test', () => {
     const dbHealthMonitor = unhealthyMainLoop.getDatabaseHealthMonitor();
     vi.spyOn(dbHealthMonitor, 'validateOnStartup').mockResolvedValue({
       healthy: false,
+      latencyMs: 0,
       error: 'Connection refused',
     });
 

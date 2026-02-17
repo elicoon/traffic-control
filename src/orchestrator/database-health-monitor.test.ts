@@ -20,9 +20,9 @@ describe('DatabaseHealthMonitor', () => {
     maxConsecutiveDbFailures: 3,
     dbRetryConfig: {
       maxRetries: 5,
-      baseDelayMs: 1000,
+      initialDelayMs: 1000,
       maxDelayMs: 30000,
-      timeoutMs: 5000,
+      backoffMultiplier: 2,
     },
   };
 
@@ -32,10 +32,19 @@ describe('DatabaseHealthMonitor', () => {
 
     // Create mock event bus
     mockEventBus = {
+      config: {},
+      handlers: new Map(),
+      patternHandlers: new Set(),
+      history: [],
+      emittingError: false,
       emit: vi.fn(),
       on: vi.fn(),
       off: vi.fn(),
-    };
+      once: vi.fn(),
+      onPattern: vi.fn(),
+      getHistory: vi.fn(() => []),
+      clearHistory: vi.fn(),
+    } as any;
 
     // Create monitor instance with default config
     monitor = new DatabaseHealthMonitor(defaultConfig, mockEventBus);
