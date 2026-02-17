@@ -3,6 +3,7 @@ import { MetricsCollector, ProjectMetrics, SystemMetrics } from './metrics-colle
 import { RecommendationEngine, RecommendationReport } from './recommendation-engine.js';
 import { sendMessage, formatStatusReport } from '../slack/bot.js';
 import { logger } from '../logging/index.js';
+import type { BacklogValidationCompletePayload } from '../events/event-types.js';
 
 const log = logger.child('Reporter');
 
@@ -29,6 +30,7 @@ export interface GeneratedReport {
   };
   recommendations: RecommendationReport;
   timestamp: Date;
+  validationResult: BacklogValidationCompletePayload | null;
 }
 
 const DEFAULT_CONFIG: ReporterConfig = {
@@ -46,6 +48,7 @@ export class Reporter {
   private recommendationEngine: RecommendationEngine;
   private schedulerInterval: NodeJS.Timeout | null = null;
   private running: boolean = false;
+  private lastValidationResult: BacklogValidationCompletePayload | null = null;
 
   constructor(private client: SupabaseClient, config?: Partial<ReporterConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -79,6 +82,13 @@ export class Reporter {
     }
 
     return new Reporter(client, config);
+  }
+
+  /**
+   * Updates the last backlog validation result for inclusion in scheduled reports.
+   */
+  setValidationResult(result: BacklogValidationCompletePayload | null): void {
+    this.lastValidationResult = result;
   }
 
   /**
@@ -207,7 +217,8 @@ export class Reporter {
     return {
       metrics,
       recommendations,
-      timestamp: new Date()
+      timestamp: new Date(),
+      validationResult: this.lastValidationResult,
     };
   }
 
@@ -232,10 +243,28 @@ export class Reporter {
       const report = await this.generateReport();
 
       // Format the report for Slack
-      const formattedReport = formatStatusReport(
+      let formattedReport = formatStatusReport(
         report.metrics,
         report.recommendations
       );
+
+      // Append validation summary if available
+      if (report.validationResult) {
+        const v = report.validationResult;
+        const lines = [
+          '',
+          '*Backlog Validation*',
+          `Tasks checked: ${v.taskCount} | Errors: ${v.errorCount} | Warnings: ${v.warningCount}`,
+        ];
+        if (v.errorCount > 0) {
+          lines.push('');
+          lines.push('*Errors requiring attention:*');
+          v.issues
+            .filter(i => i.severity === 'error')
+            .forEach(i => lines.push(`• *${i.taskTitle}* — ${i.message}`));
+        }
+        formattedReport += '\n' + lines.join('\n');
+      }
 
       // Send to Slack
       await sendMessage({

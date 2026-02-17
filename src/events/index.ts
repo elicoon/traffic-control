@@ -78,6 +78,7 @@ export {
   SystemStartedPayload,
   SystemStoppedPayload,
   SystemErrorPayload,
+  BacklogValidationCompletePayload,
 
   // Utilities
   createEvent,

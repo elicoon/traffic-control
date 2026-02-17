@@ -1,6 +1,7 @@
 import { Scheduler } from '../scheduler/scheduler.js';
 import { AgentManager } from '../agent/manager.js';
 import { BacklogManager } from '../backlog/backlog-manager.js';
+import { BacklogValidator } from '../backlog/index.js';
 import { Reporter } from '../reporter/reporter.js';
 import { CapacityTracker } from '../scheduler/capacity-tracker.js';
 import { LearningProvider } from '../learning/learning-provider.js';
@@ -15,6 +16,8 @@ import {
   getClient,
 } from '../db/client.js';
 import { EventBus } from '../events/event-bus.js';
+import { createEvent } from '../events/event-types.js';
+import type { BacklogValidationCompletePayload } from '../events/event-types.js';
 import { logger } from '../logging/index.js';
 import { DatabaseHealthMonitor } from './database-health-monitor.js';
 import { PreFlightChecker, PreFlightConfig, PreFlightResult } from './pre-flight.js';
@@ -63,6 +66,8 @@ export interface OrchestrationConfig {
   circuitBreakerFailureThreshold: number;
   /** Circuit breaker reset timeout in ms (default: 5 minutes) */
   circuitBreakerResetTimeoutMs: number;
+  /** How often to run backlog validation in ms (default: 1 hour, 0 to disable) */
+  backlogValidationIntervalMs: number;
 }
 
 /**
@@ -153,6 +158,7 @@ const DEFAULT_CONFIG: OrchestrationConfig = {
   hardStopAtBudgetLimit: false,
   circuitBreakerFailureThreshold: 5,
   circuitBreakerResetTimeoutMs: 5 * 60 * 1000, // 5 minutes
+  backlogValidationIntervalMs: 60 * 60 * 1000, // 1 hour
 };
 
 /**
@@ -187,6 +193,8 @@ export class MainLoop {
   private circuitBreaker: CircuitBreaker;
   private slackIntegration: SlackIntegration | null = null;
   private consecutiveFailures: number = 0;
+  private backlogValidator: BacklogValidator | null = null;
+  private lastValidationAt: Date | null = null;
 
   constructor(config: Partial<OrchestrationConfig>, deps: OrchestrationDependencies, eventBus?: EventBus) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -224,8 +232,14 @@ export class MainLoop {
       autoReset: true,
     });
 
+    // Instantiate BacklogValidator if taskRepository is available
+    if (deps.taskRepository) {
+      this.backlogValidator = new BacklogValidator(deps.taskRepository);
+    }
+
     this.setupAgentEventHandlers();
     this.setupSafetyCallbacks();
+    this.setupValidationEventListener();
   }
 
   /**
@@ -235,6 +249,19 @@ export class MainLoop {
     this.slackIntegration = slack;
     this.taskApprovalManager.setSendRequestFn(async (task, message) => {
       return slack.sendApprovalRequest(task, message);
+    });
+  }
+
+  /**
+   * Sets up EventBus listener for backlog validation results to forward to Reporter.
+   */
+  private setupValidationEventListener(): void {
+    if (!this.eventBus) return;
+
+    this.eventBus.on('backlog:validation:complete', (event) => {
+      if (typeof this.deps.reporter.setValidationResult === 'function') {
+        this.deps.reporter.setValidationResult(event.payload);
+      }
     });
   }
 
@@ -1103,6 +1130,54 @@ export class MainLoop {
   }
 
   /**
+   * Runs backlog validation and emits results via event bus and Slack.
+   */
+  private async runBacklogValidation(): Promise<void> {
+    if (!this.backlogValidator) return;
+
+    log.info('Running backlog validation');
+
+    const result = await this.backlogValidator.validate();
+    this.lastValidationAt = new Date();
+
+    const errorCount = result.issues.filter(i => i.severity === 'error').length;
+    const warningCount = result.issues.filter(i => i.severity === 'warning').length;
+
+    log.info('Backlog validation complete', {
+      taskCount: result.taskCount,
+      errorCount,
+      warningCount,
+    });
+
+    // Emit event via EventBus
+    if (this.eventBus) {
+      const payload: BacklogValidationCompletePayload = {
+        issues: result.issues,
+        checkedAt: result.checkedAt,
+        taskCount: result.taskCount,
+        errorCount,
+        warningCount,
+      };
+      this.eventBus.emit(createEvent('backlog:validation:complete', payload));
+    }
+
+    // Send Slack notifications for error-severity issues
+    if (errorCount > 0 && this.slackIntegration) {
+      const channelId = process.env.TC_SLACK_CHANNEL || '';
+      if (channelId) {
+        const errorIssues = result.issues.filter(i => i.severity === 'error');
+        const lines = [
+          `*Backlog Validation: ${errorCount} error(s) found*`,
+          '',
+          ...errorIssues.map(i => `• *${i.taskTitle}* — ${i.message} \`[${i.rule}]\``),
+        ];
+        await this.slackIntegration.sendMessage(channelId, lines.join('\n'))
+          .catch(err => log.error('Failed to send validation alert', err instanceof Error ? err : new Error(String(err))));
+      }
+    }
+  }
+
+  /**
    * Single tick of the orchestration loop
    */
   private async tick(): Promise<void> {
@@ -1173,6 +1248,17 @@ export class MainLoop {
             });
           }
         }
+      }
+
+      // Run backlog validation on configured interval
+      const validationIntervalMs = this.config.backlogValidationIntervalMs;
+      if (
+        validationIntervalMs > 0 &&
+        this.backlogValidator !== null &&
+        (this.lastValidationAt === null ||
+          Date.now() - this.lastValidationAt.getTime() >= validationIntervalMs)
+      ) {
+        await this.runBacklogValidation();
       }
 
       // Reset consecutive failures on successful tick

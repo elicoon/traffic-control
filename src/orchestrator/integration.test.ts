@@ -131,6 +131,7 @@ describe('Phase 5 Integration', () => {
       hardStopAtBudgetLimit: false,
       circuitBreakerFailureThreshold: 5,
       circuitBreakerResetTimeoutMs: 300000,
+      backlogValidationIntervalMs: 0, // Disable in tests
     };
 
     mockDeps = {
@@ -1161,6 +1162,63 @@ describe('Phase 5 Integration', () => {
       });
     });
   });
+
+  describe('BacklogValidator Integration', () => {
+    it('runs validation during tick and emits backlog:validation:complete event', async () => {
+      const validationEventBus = new EventBus();
+      const validationEvents: any[] = [];
+      validationEventBus.on('backlog:validation:complete', (event) => {
+        validationEvents.push(event);
+      });
+
+      // Mock taskRepository to return a high-priority unconfirmed task (triggers error)
+      const mockTaskRepo = {
+        getById: vi.fn().mockResolvedValue(null),
+        getQueued: vi.fn().mockResolvedValue([
+          {
+            id: 'task-hp',
+            title: 'High Priority Unconfirmed',
+            priority: 9,
+            priority_confirmed: false,
+            description: 'desc',
+            acceptance_criteria: 'ac',
+            blocked_by_task_id: null,
+            created_at: new Date().toISOString(),
+            status: 'queued',
+          },
+        ]),
+      };
+
+      const validationDeps: OrchestrationDependencies = {
+        scheduler: createMockScheduler() as any,
+        agentManager: createMockAgentManager() as any,
+        backlogManager: createMockBacklogManager() as any,
+        reporter: { ...createMockReporter(), setValidationResult: vi.fn() } as any,
+        capacityTracker: createMockCapacityTracker() as any,
+        learningProvider: createMockLearningProvider() as any,
+        retrospectiveTrigger: createMockRetrospectiveTrigger() as any,
+        taskRepository: mockTaskRepo as any,
+      };
+
+      const validationConfig: OrchestrationConfig = {
+        ...config,
+        backlogValidationIntervalMs: 1, // Run on first tick
+      };
+
+      const validationLoop = new MainLoop(validationConfig, validationDeps, validationEventBus);
+      await validationLoop.start();
+
+      // Advance timers to trigger at least one tick
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect(validationEvents.length).toBeGreaterThan(0);
+      const event = validationEvents[0];
+      expect(event.payload.errorCount).toBeGreaterThan(0);
+      expect(event.payload.issues.some((i: any) => i.rule === 'unconfirmed_high_priority')).toBe(true);
+
+      await validationLoop.stop();
+    });
+  });
 });
 
 // =============================================================================
@@ -1214,6 +1272,7 @@ describe('MainLoop Startup Smoke Test', () => {
       hardStopAtBudgetLimit: false,
       circuitBreakerFailureThreshold: 5,
       circuitBreakerResetTimeoutMs: 5000,
+      backlogValidationIntervalMs: 0, // Disable in tests
     };
 
     mockDeps = {

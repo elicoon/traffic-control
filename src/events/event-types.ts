@@ -39,7 +39,9 @@ export type EventType =
   // Database events
   | 'database:healthy'
   | 'database:degraded'
-  | 'database:recovered';
+  | 'database:recovered'
+  // Backlog events
+  | 'backlog:validation:complete';
 
 /**
  * Set of all valid event types for runtime validation
@@ -65,6 +67,7 @@ const ALL_EVENT_TYPES: Set<string> = new Set([
   'database:healthy',
   'database:degraded',
   'database:recovered',
+  'backlog:validation:complete',
 ]);
 
 /**
@@ -266,6 +269,23 @@ export interface DatabaseRecoveredPayload {
   downtimeMs: number;
 }
 
+/**
+ * Payload for backlog:validation:complete event
+ */
+export interface BacklogValidationCompletePayload {
+  issues: Array<{
+    taskId: string;
+    taskTitle: string;
+    rule: string;
+    severity: 'warning' | 'error';
+    message: string;
+  }>;
+  checkedAt: string;
+  taskCount: number;
+  errorCount: number;
+  warningCount: number;
+}
+
 // ============================================================================
 // Event Payload Mapping
 // ============================================================================
@@ -294,6 +314,7 @@ export interface EventPayloads {
   'database:healthy': DatabaseHealthyPayload;
   'database:degraded': DatabaseDegradedPayload;
   'database:recovered': DatabaseRecoveredPayload;
+  'backlog:validation:complete': BacklogValidationCompletePayload;
 }
 
 /**

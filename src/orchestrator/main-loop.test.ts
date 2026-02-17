@@ -59,6 +59,7 @@ const createMockReporter = () => ({
   isRunning: vi.fn().mockReturnValue(false),
   sendImmediateReport: vi.fn().mockResolvedValue({ sent: true }),
   generateReport: vi.fn().mockResolvedValue({}),
+  setValidationResult: vi.fn(),
 });
 
 const createMockCapacityTracker = () => ({
@@ -162,6 +163,7 @@ const createDefaultConfig = (): OrchestrationConfig => ({
   hardStopAtBudgetLimit: false,
   circuitBreakerFailureThreshold: 5,
   circuitBreakerResetTimeoutMs: 5000,
+  backlogValidationIntervalMs: 0, // Disable in tests
 });
 
 describe('MainLoop', () => {
