@@ -1,4 +1,17 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('CostTracker');
+
+/**
+ * Hardcoded fallback pricing (per 1M tokens) used when DB pricing is unavailable.
+ * Values match Anthropic's published pricing as of 2026-01.
+ */
+const FALLBACK_PRICING: Record<string, { input: number; output: number }> = {
+  opus: { input: 15, output: 75 },
+  sonnet: { input: 3, output: 15 },
+  haiku: { input: 0.25, output: 1.25 },
+};
 
 /**
  * Model pricing information from the database
@@ -116,43 +129,67 @@ export class CostTracker {
   async getPricingForModel(model: string, atDate?: Date): Promise<ModelPricing | null> {
     const targetDate = atDate ?? new Date();
 
-    const { data, error } = await this.client
-      .from('tc_model_pricing')
-      .select('*')
-      .eq('model', model)
-      .lte('effective_from', targetDate.toISOString())
-      .or(`effective_until.is.null,effective_until.gte.${targetDate.toISOString()}`)
-      .order('effective_from', { ascending: false })
-      .limit(1);
+    try {
+      const { data, error } = await this.client
+        .from('tc_model_pricing')
+        .select('*')
+        .eq('model', model)
+        .lte('effective_from', targetDate.toISOString())
+        .or(`effective_until.is.null,effective_until.gte.${targetDate.toISOString()}`)
+        .order('effective_from', { ascending: false })
+        .limit(1);
 
-    if (error) {
-      throw new Error(`Failed to get pricing: ${error.message}`);
+      if (!error) {
+        const rows = data as ModelPricingRow[];
+        if (rows && rows.length > 0) {
+          return this.rowToModelPricing(rows[0]);
+        }
+      } else {
+        log.warn('Database pricing query failed, using fallback pricing', {
+          model,
+          error: error.message,
+        });
+      }
+    } catch (err) {
+      log.warn('Database pricing unavailable, using fallback pricing', {
+        model,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
-    const rows = data as ModelPricingRow[];
-    if (!rows || rows.length === 0) {
-      return null;
-    }
-
-    return this.rowToModelPricing(rows[0]);
+    // Use fallback pricing if available for this model
+    return this.getFallbackPricing(model);
   }
 
   /**
    * Get all current pricing (where effective_until is null)
    */
   async getAllCurrentPricing(): Promise<ModelPricing[]> {
-    const { data, error } = await this.client
-      .from('tc_model_pricing')
-      .select('*')
-      .is('effective_until', null)
-      .order('model');
+    try {
+      const { data, error } = await this.client
+        .from('tc_model_pricing')
+        .select('*')
+        .is('effective_until', null)
+        .order('model');
 
-    if (error) {
-      throw new Error(`Failed to get current pricing: ${error.message}`);
+      if (!error) {
+        const rows = data as ModelPricingRow[];
+        if (rows && rows.length > 0) {
+          return rows.map(row => this.rowToModelPricing(row));
+        }
+      } else {
+        log.warn('Database pricing query failed, using fallback pricing for all models', {
+          error: error.message,
+        });
+      }
+    } catch (err) {
+      log.warn('Database pricing unavailable, using fallback pricing for all models', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
-    const rows = data as ModelPricingRow[];
-    return rows.map(row => this.rowToModelPricing(row));
+    // Return fallback pricing for all known models
+    return this.getAllFallbackPricing();
   }
 
   /**
@@ -367,6 +404,39 @@ export class CostTracker {
       totalCost: opusCost + sonnetCost + haikuCost,
       breakdown,
     };
+  }
+
+  /**
+   * Get fallback pricing for a single model, or null if no fallback exists
+   */
+  private getFallbackPricing(model: string): ModelPricing | null {
+    const fallback = FALLBACK_PRICING[model];
+    if (!fallback) {
+      return null;
+    }
+
+    log.warn('Using fallback pricing — database pricing unavailable', { model });
+
+    return {
+      model: model as ModelPricing['model'],
+      inputPricePerMillion: fallback.input,
+      outputPricePerMillion: fallback.output,
+      effectiveFrom: new Date(0),
+    };
+  }
+
+  /**
+   * Get fallback pricing for all known models
+   */
+  private getAllFallbackPricing(): ModelPricing[] {
+    log.warn('Using fallback pricing for all models — database pricing unavailable');
+
+    return Object.entries(FALLBACK_PRICING).map(([model, prices]) => ({
+      model: model as ModelPricing['model'],
+      inputPricePerMillion: prices.input,
+      outputPricePerMillion: prices.output,
+      effectiveFrom: new Date(0),
+    }));
   }
 
   /**

@@ -687,7 +687,7 @@ describe('TaskApprovalManager', () => {
       await approvalPromise;
     });
 
-    it('should include session estimates when cost estimation fails', async () => {
+    it('should include cost estimates using fallback pricing when DB pricing unavailable', async () => {
       const task = createMockTask({
         estimated_sessions_opus: 3,
         estimated_sessions_sonnet: 5,
@@ -695,13 +695,13 @@ describe('TaskApprovalManager', () => {
 
       const { approvalPromise } = await startApprovalRequest(manager, task);
 
-      // The message should contain session info since CostTracker will fail without pricing data
-      // Check that the message mentions sessions
+      // CostTracker now uses fallback pricing when DB is unavailable,
+      // so the message should show cost estimates instead of just session counts
       const call = mockSendFn as unknown as ReturnType<typeof vi.fn>;
       const messageText = call.mock.calls[0][0].text;
-      expect(messageText).toContain('Estimated Sessions');
-      expect(messageText).toContain('Opus: 3');
-      expect(messageText).toContain('Sonnet: 5');
+      expect(messageText).toContain('Estimated Cost');
+      expect(messageText).toContain('Opus');
+      expect(messageText).toContain('Sonnet');
 
       // Clean up
       await manager.handleReaction('white_check_mark', task.id, 'user-1');

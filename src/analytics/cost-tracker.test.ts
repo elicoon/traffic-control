@@ -6,6 +6,18 @@ import {
 } from './cost-tracker.js';
 import { SupabaseClient } from '@supabase/supabase-js';
 
+// Mock the logger to prevent actual log output and allow assertions
+vi.mock('../logging/index.js', () => ({
+  logger: {
+    child: () => ({
+      info: vi.fn(),
+      debug: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    }),
+  },
+}));
+
 /**
  * Create a mock Supabase client for testing
  */
@@ -176,12 +188,23 @@ describe('CostTracker', () => {
       expect(pricing).toBeNull();
     });
 
-    it('should throw on database error', async () => {
+    it('should return fallback pricing on database error for known model', async () => {
       mockClient.setSelectResult(null, { message: 'Database error' });
 
-      await expect(tracker.getPricingForModel('opus')).rejects.toThrow(
-        'Failed to get pricing: Database error'
-      );
+      const pricing = await tracker.getPricingForModel('opus');
+
+      expect(pricing).toBeDefined();
+      expect(pricing!.model).toBe('opus');
+      expect(pricing!.inputPricePerMillion).toBe(15);
+      expect(pricing!.outputPricePerMillion).toBe(75);
+    });
+
+    it('should return null on database error for unknown model', async () => {
+      mockClient.setSelectResult(null, { message: 'Database error' });
+
+      const pricing = await tracker.getPricingForModel('unknown');
+
+      expect(pricing).toBeNull();
     });
   });
 
@@ -471,6 +494,72 @@ describe('CostTracker', () => {
       expect(estimate.opusCost).toBeCloseTo(3.0, 2);
       expect(estimate.sonnetCost).toBeCloseTo(1.5, 2);
       expect(estimate.totalCost).toBeCloseTo(4.5, 2);
+    });
+  });
+
+  describe('fallback pricing', () => {
+    it('should return hardcoded fallback prices when DB returns no rows for known model', async () => {
+      // Simulate empty DB (no pricing rows)
+      mockClient.setSelectResult([]);
+
+      const opusPricing = await tracker.getPricingForModel('opus');
+      expect(opusPricing).toBeDefined();
+      expect(opusPricing!.inputPricePerMillion).toBe(15);
+      expect(opusPricing!.outputPricePerMillion).toBe(75);
+
+      mockClient.setSelectResult([]);
+      const sonnetPricing = await tracker.getPricingForModel('sonnet');
+      expect(sonnetPricing).toBeDefined();
+      expect(sonnetPricing!.inputPricePerMillion).toBe(3);
+      expect(sonnetPricing!.outputPricePerMillion).toBe(15);
+    });
+
+    it('should return DB prices when DB is available (not fallback)', async () => {
+      const dbPricingData = [{
+        id: 'pricing-1',
+        model: 'opus',
+        input_price_per_million: '20.000000',
+        output_price_per_million: '100.000000',
+        effective_from: '2026-01-01T00:00:00Z',
+        effective_until: null,
+      }];
+
+      mockClient.setSelectResult(dbPricingData);
+
+      const pricing = await tracker.getPricingForModel('opus');
+
+      // Should use DB prices, NOT fallback
+      expect(pricing).toBeDefined();
+      expect(pricing!.inputPricePerMillion).toBe(20);
+      expect(pricing!.outputPricePerMillion).toBe(100);
+    });
+
+    it('should calculate non-zero costs using fallback when DB is unavailable', async () => {
+      // Simulate DB error
+      mockClient.setSelectResult(null, { message: 'Connection refused' });
+
+      const cost = await tracker.calculateCost('opus', 1_000_000, 100_000);
+
+      // Fallback: 1M * $15/M = $15 input, 100K * $75/M = $7.50 output
+      expect(cost.totalCost).toBeCloseTo(22.5, 2);
+      expect(cost.totalCost).toBeGreaterThan(0);
+    });
+
+    it('should return fallback pricing for all models when getAllCurrentPricing DB fails', async () => {
+      mockClient.setSelectResult(null, { message: 'Database unavailable' });
+
+      const allPricing = await tracker.getAllCurrentPricing();
+
+      expect(allPricing.length).toBeGreaterThanOrEqual(3);
+      const opus = allPricing.find(p => p.model === 'opus');
+      const sonnet = allPricing.find(p => p.model === 'sonnet');
+      const haiku = allPricing.find(p => p.model === 'haiku');
+      expect(opus).toBeDefined();
+      expect(opus!.inputPricePerMillion).toBe(15);
+      expect(sonnet).toBeDefined();
+      expect(sonnet!.inputPricePerMillion).toBe(3);
+      expect(haiku).toBeDefined();
+      expect(haiku!.inputPricePerMillion).toBe(0.25);
     });
   });
 });
