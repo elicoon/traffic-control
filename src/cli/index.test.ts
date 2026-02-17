@@ -3,6 +3,7 @@ import { CLI, CLIOptions, parseArgs, formatOutput } from './index.js';
 import { Commands, CommandResult } from './commands.js';
 import { ConfigLoader } from './config-loader.js';
 import { Logger } from './logger.js';
+import pkg from '../../package.json' with { type: 'json' };
 
 // Mock dependencies
 vi.mock('./commands.js', async () => {
@@ -430,6 +431,14 @@ describe('CLI', () => {
       expect(consoleSpy.log).toHaveBeenCalled();
       const output = consoleSpy.log.mock.calls.flat().join('\n');
       expect(output).toMatch(/\d+\.\d+\.\d+/);
+    });
+
+    it('should display version matching package.json', () => {
+      CLI.showVersion();
+
+      expect(consoleSpy.log).toHaveBeenCalled();
+      const output = consoleSpy.log.mock.calls.flat().join('\n');
+      expect(output).toContain(pkg.version);
     });
   });
 });
