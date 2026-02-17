@@ -31,7 +31,7 @@ function createMockTask(overrides: Partial<Task> = {}): Task {
     started_at: null,
     completed_at: null,
     // Priority confirmation
-    priority_confirmed: false,
+    priority_confirmed: true,
     priority_confirmed_at: null,
     priority_confirmed_by: null,
     created_at: new Date().toISOString(),
@@ -306,6 +306,108 @@ describe('TaskQueue', () => {
 
     it('should return false if task does not exist', () => {
       expect(queue.has('task-1')).toBe(false);
+    });
+  });
+
+  describe('priority_confirmed filter', () => {
+    it('should dequeue a task with priority_confirmed = true', () => {
+      const confirmedTask = createMockTask({
+        id: 'confirmed-task',
+        priority: 5,
+        priority_confirmed: true,
+      });
+      queue.enqueue(confirmedTask);
+
+      const result = queue.dequeue();
+      expect(result).toBeDefined();
+      expect(result?.task.id).toBe('confirmed-task');
+    });
+
+    it('should skip tasks with priority_confirmed = false', () => {
+      const unconfirmedTask = createMockTask({
+        id: 'unconfirmed-task',
+        priority: 10,
+        priority_confirmed: false,
+      });
+      queue.enqueue(unconfirmedTask);
+
+      const result = queue.dequeue();
+      expect(result).toBeUndefined();
+      // Task is still in the queue (not removed, just filtered)
+      expect(queue.size()).toBe(1);
+    });
+
+    it('should only return confirmed tasks when mixed queue', () => {
+      const unconfirmed = createMockTask({
+        id: 'unconfirmed',
+        priority: 10,
+        priority_confirmed: false,
+      });
+      const confirmed = createMockTask({
+        id: 'confirmed',
+        priority: 1,
+        priority_confirmed: true,
+      });
+
+      queue.enqueue(unconfirmed);
+      queue.enqueue(confirmed);
+
+      const result = queue.dequeue();
+      expect(result?.task.id).toBe('confirmed');
+    });
+
+    it('should filter unconfirmed tasks in getNextForModel', () => {
+      const unconfirmedOpus = createMockTask({
+        id: 'unconfirmed-opus',
+        priority: 10,
+        estimated_sessions_opus: 1,
+        estimated_sessions_sonnet: 0,
+        priority_confirmed: false,
+      });
+      const confirmedSonnet = createMockTask({
+        id: 'confirmed-sonnet',
+        priority: 1,
+        estimated_sessions_opus: 0,
+        estimated_sessions_sonnet: 1,
+        priority_confirmed: true,
+      });
+
+      queue.enqueue(unconfirmedOpus);
+      queue.enqueue(confirmedSonnet);
+
+      const result = queue.getNextForModel('opus');
+      expect(result?.task.id).toBe('confirmed-sonnet');
+    });
+
+    it('should filter unconfirmed tasks in peek', () => {
+      const unconfirmed = createMockTask({
+        id: 'unconfirmed',
+        priority: 10,
+        priority_confirmed: false,
+      });
+      queue.enqueue(unconfirmed);
+
+      expect(queue.peek()).toBeUndefined();
+    });
+
+    it('should filter unconfirmed tasks in getAllTasks', () => {
+      const unconfirmed = createMockTask({
+        id: 'unconfirmed',
+        priority: 10,
+        priority_confirmed: false,
+      });
+      const confirmed = createMockTask({
+        id: 'confirmed',
+        priority: 5,
+        priority_confirmed: true,
+      });
+
+      queue.enqueue(unconfirmed);
+      queue.enqueue(confirmed);
+
+      const all = queue.getAllTasks();
+      expect(all.length).toBe(1);
+      expect(all[0].task.id).toBe('confirmed');
     });
   });
 });
