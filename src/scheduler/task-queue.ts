@@ -188,6 +188,7 @@ export class TaskQueue {
   /**
    * Get all tasks sorted by effective priority (highest first).
    * Recalculates effective priority on each call to account for age changes.
+   * Filters out tasks where priority_confirmed is not true.
    */
   private getSortedTasks(): QueuedTask[] {
     // Recalculate effective priorities
@@ -196,8 +197,21 @@ export class TaskQueue {
       effectivePriority: this.calculateEffectivePriority(qt.task, qt.enqueuedAt),
     }));
 
+    // Filter out tasks without confirmed priority
+    const confirmedTasks = tasks.filter(qt => {
+      if (qt.task.priority_confirmed !== true) {
+        log.warn('Skipping task with unconfirmed priority', {
+          taskId: qt.task.id,
+          taskTitle: qt.task.title,
+          priority: qt.task.priority,
+        });
+        return false;
+      }
+      return true;
+    });
+
     // Sort by effective priority (descending)
-    return tasks.sort((a, b) => b.effectivePriority - a.effectivePriority);
+    return confirmedTasks.sort((a, b) => b.effectivePriority - a.effectivePriority);
   }
 
   /**
