@@ -10,16 +10,13 @@ import { UsageLogRepository } from '../db/repositories/usage-log.js';
 import { StateManager, OrchestrationState, AgentState } from './state-manager.js';
 import { EventDispatcher, AgentEvent, EventHandler } from './event-dispatcher.js';
 import {
-  checkHealth,
-  waitForHealthy,
-  HealthCheckResult,
   RetryConfig,
   DEFAULT_RETRY_CONFIG,
   getClient,
 } from '../db/client.js';
 import { EventBus } from '../events/event-bus.js';
-import { createEvent } from '../events/event-types.js';
 import { logger } from '../logging/index.js';
+import { DatabaseHealthMonitor } from './database-health-monitor.js';
 import { PreFlightChecker, PreFlightConfig, PreFlightResult } from './pre-flight.js';
 import {
   TaskApprovalManager,
@@ -177,12 +174,9 @@ export class MainLoop {
   private statusCheckInInterval: NodeJS.Timeout | null = null;
   private running: boolean = false;
   private paused: boolean = false;
-  private degraded: boolean = false;
   private shuttingDown: boolean = false;
-  private consecutiveDbFailures: number = 0;
-  private lastDbHealthyAt: Date | null = null;
-  private lastDbError: string | null = null;
   private globalEventHandlers: EventHandler[] = [];
+  private dbHealthMonitor: DatabaseHealthMonitor;
   private preFlightChecker: PreFlightChecker | null = null;
   private lastPreFlightResult: PreFlightResult | null = null;
 
@@ -202,6 +196,13 @@ export class MainLoop {
       stateFilePath: this.config.stateFilePath,
     });
     this.eventDispatcher = new EventDispatcher();
+    this.dbHealthMonitor = new DatabaseHealthMonitor(
+      {
+        maxConsecutiveDbFailures: this.config.maxConsecutiveDbFailures,
+        dbRetryConfig: this.config.dbRetryConfig,
+      },
+      this.eventBus
+    );
 
     // Initialize safety systems
     this.taskApprovalManager = new TaskApprovalManager({
@@ -620,17 +621,14 @@ export class MainLoop {
     if (this.config.validateDatabaseOnStartup) {
       log.info('Validating database connection');
       log.time('db-validation');
-      const healthResult = await this.validateDatabaseOnStartup();
+      const healthResult = await this.dbHealthMonitor.validateOnStartup();
       log.timeEnd('db-validation');
       if (!healthResult.healthy) {
         log.error('Database unavailable, cannot start orchestrator', { error: healthResult.error });
         throw new Error(`Database unavailable: ${healthResult.error}. Cannot start orchestrator.`);
       }
       log.info('Database healthy', { latencyMs: healthResult.latencyMs });
-      this.lastDbHealthyAt = new Date();
-
-      // Emit healthy event
-      this.emitDatabaseEvent('database:healthy', { latencyMs: healthResult.latencyMs });
+      this.dbHealthMonitor.recordStartupHealthy(healthResult.latencyMs);
     }
 
     // Run pre-flight checks if configured
@@ -692,9 +690,8 @@ export class MainLoop {
     // Update state
     this.running = true;
     this.paused = false;
-    this.degraded = false;
     this.shuttingDown = false;
-    this.consecutiveDbFailures = 0;
+    this.dbHealthMonitor.reset();
     this.consecutiveFailures = 0;
     this.stateManager.updateState({ isRunning: true, isPaused: false });
 
@@ -737,23 +734,6 @@ export class MainLoop {
 
     process.on('SIGINT', () => handleShutdown('SIGINT'));
     process.on('SIGTERM', () => handleShutdown('SIGTERM'));
-  }
-
-  /**
-   * Validates database connection on startup with retry logic
-   */
-  private async validateDatabaseOnStartup(): Promise<HealthCheckResult> {
-    return waitForHealthy(
-      this.config.dbRetryConfig,
-      (attempt, delay, lastError) => {
-        log.warn('Database not ready, retrying', {
-          attempt,
-          maxRetries: this.config.dbRetryConfig.maxRetries,
-          retryDelayMs: delay,
-          lastError: lastError || undefined,
-        });
-      }
-    );
   }
 
   /**
@@ -849,7 +829,7 @@ export class MainLoop {
    * Checks if the loop is in degraded mode due to database issues
    */
   isDegraded(): boolean {
-    return this.degraded;
+    return this.dbHealthMonitor.isDegraded();
   }
 
   /**
@@ -886,14 +866,9 @@ export class MainLoop {
     return {
       isRunning: this.running,
       isPaused: this.paused,
-      isDegraded: this.degraded,
+      isDegraded: this.dbHealthMonitor.isDegraded(),
       activeAgentCount: this.stateManager.getState().activeAgents.size,
-      dbHealth: {
-        healthy: !this.degraded,
-        consecutiveFailures: this.consecutiveDbFailures,
-        lastHealthyAt: this.lastDbHealthyAt || undefined,
-        lastError: this.lastDbError || undefined,
-      },
+      dbHealth: this.dbHealthMonitor.getStats(),
       schedulerStats,
       safety: {
         circuitBreakerState: circuitBreakerStats.state,
@@ -1161,9 +1136,9 @@ export class MainLoop {
 
     try {
       // If in degraded mode, try to recover first
-      if (this.degraded) {
-        await this.attemptDbRecovery();
-        if (this.degraded) {
+      if (this.dbHealthMonitor.isDegraded()) {
+        await this.dbHealthMonitor.attemptDbRecovery();
+        if (this.dbHealthMonitor.isDegraded()) {
           // Still degraded, skip this tick
           return;
         }
@@ -1201,13 +1176,13 @@ export class MainLoop {
       }
 
       // Reset consecutive failures on successful tick
-      if (this.consecutiveDbFailures > 0) {
-        this.onDbSuccess();
+      if (this.dbHealthMonitor.getStats().consecutiveFailures > 0) {
+        this.dbHealthMonitor.onDbSuccess();
       }
     } catch (error) {
       // Check if this is a database-related error
-      if (this.isDbError(error)) {
-        this.onDbFailure(error);
+      if (this.dbHealthMonitor.isDbError(error)) {
+        this.dbHealthMonitor.onDbFailure(error);
       } else {
         // Non-DB error, just log it
         log.error('Error in tick', error instanceof Error ? error : new Error(String(error)));
@@ -1239,124 +1214,10 @@ export class MainLoop {
   }
 
   /**
-   * Checks if an error is database-related
+   * Gets the database health monitor instance
    */
-  private isDbError(error: unknown): boolean {
-    if (error instanceof Error) {
-      const msg = error.message.toLowerCase();
-      return (
-        msg.includes('supabase') ||
-        msg.includes('database') ||
-        msg.includes('connection') ||
-        msg.includes('network') ||
-        msg.includes('timeout') ||
-        msg.includes('econnrefused') ||
-        msg.includes('enotfound')
-      );
-    }
-    return false;
-  }
-
-  /**
-   * Handles a database failure
-   */
-  private onDbFailure(error: unknown): void {
-    this.consecutiveDbFailures++;
-    this.lastDbError = error instanceof Error ? error.message : String(error);
-
-    log.error('Database error', error instanceof Error ? error : new Error(String(error)), {
-      consecutiveFailures: this.consecutiveDbFailures,
-      maxConsecutiveDbFailures: this.config.maxConsecutiveDbFailures,
-    });
-
-    // Enter degraded mode if too many consecutive failures
-    if (this.consecutiveDbFailures >= this.config.maxConsecutiveDbFailures && !this.degraded) {
-      this.enterDegradedMode();
-    }
-  }
-
-  /**
-   * Handles a successful database operation
-   */
-  private onDbSuccess(): void {
-    const wasRecovery = this.degraded;
-    const downtimeMs = this.lastDbHealthyAt ? Date.now() - this.lastDbHealthyAt.getTime() : 0;
-
-    this.consecutiveDbFailures = 0;
-    this.lastDbError = null;
-    this.lastDbHealthyAt = new Date();
-
-    if (wasRecovery) {
-      this.exitDegradedMode(downtimeMs);
-    }
-  }
-
-  /**
-   * Enters degraded mode due to database issues
-   */
-  private enterDegradedMode(): void {
-    this.degraded = true;
-    log.warn('Entering DEGRADED MODE due to database unavailability', {
-      consecutiveFailures: this.consecutiveDbFailures,
-      lastError: this.lastDbError,
-      lastHealthyAt: this.lastDbHealthyAt?.toISOString(),
-    });
-
-    this.emitDatabaseEvent('database:degraded', {
-      error: this.lastDbError || 'Unknown database error',
-      lastHealthyAt: this.lastDbHealthyAt || undefined,
-      retryCount: this.consecutiveDbFailures,
-    });
-  }
-
-  /**
-   * Exits degraded mode after database recovery
-   */
-  private exitDegradedMode(downtimeMs: number): void {
-    this.degraded = false;
-    log.info('Exiting DEGRADED MODE - database connection recovered', { downtimeMs });
-
-    this.emitDatabaseEvent('database:recovered', {
-      latencyMs: 0, // Will be set by the health check
-      downtimeMs,
-    });
-  }
-
-  /**
-   * Attempts to recover from degraded mode by checking database health
-   */
-  private async attemptDbRecovery(): Promise<void> {
-    const result = await checkHealth();
-
-    if (result.healthy) {
-      const downtimeMs = this.lastDbHealthyAt ? Date.now() - this.lastDbHealthyAt.getTime() : 0;
-      this.consecutiveDbFailures = 0;
-      this.lastDbError = null;
-      this.lastDbHealthyAt = new Date();
-      this.degraded = false;
-
-      log.info('Database recovered, exiting degraded mode', {
-        latencyMs: result.latencyMs,
-        downtimeMs,
-      });
-
-      this.emitDatabaseEvent('database:recovered', {
-        latencyMs: result.latencyMs,
-        downtimeMs,
-      });
-    }
-  }
-
-  /**
-   * Emits a database event through the event bus
-   */
-  private emitDatabaseEvent(
-    type: 'database:healthy' | 'database:degraded' | 'database:recovered',
-    payload: Record<string, unknown>
-  ): void {
-    if (this.eventBus) {
-      this.eventBus.emit(createEvent(type, payload as any));
-    }
+  getDatabaseHealthMonitor(): DatabaseHealthMonitor {
+    return this.dbHealthMonitor;
   }
 
   /**
