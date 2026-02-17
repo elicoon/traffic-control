@@ -165,35 +165,9 @@ export interface IAgentAdapter {
 }
 
 /**
- * Interface for the SDK adapter - allows mocking in tests
- * @deprecated Use IAgentAdapter for new code
- */
-export interface ISDKAdapter extends IAgentAdapter {
-  /**
-   * Start a new agent query
-   */
-  startQuery(
-    sessionId: string,
-    prompt: string,
-    config: SDKAdapterConfig,
-    onMessage?: SDKMessageHandler
-  ): Promise<ActiveQuery>;
-
-  /**
-   * Extract token usage from SDK result
-   */
-  extractUsage(result: SDKResultMessage): TokenUsage;
-
-  /**
-   * Map an SDK message to our AgentEvent type
-   */
-  mapToAgentEvent(message: SDKMessage, sessionId: string): AgentEvent | null;
-}
-
-/**
  * Default implementation of the SDK adapter
  */
-export class SDKAdapter implements ISDKAdapter {
+export class SDKAdapter implements IAgentAdapter {
   private queryFn: typeof import('@anthropic-ai/claude-agent-sdk').query;
   private sessionModels: Map<string, AgentConfig['model']> = new Map();
 
@@ -455,7 +429,7 @@ export class SDKAdapter implements ISDKAdapter {
 /**
  * Create a mock SDK adapter for testing
  */
-export function createMockSDKAdapter(): ISDKAdapter & {
+export function createMockSDKAdapter(): IAgentAdapter & {
   mockStartQuery: ReturnType<typeof import('vitest').vi.fn>;
   mockExtractUsage: ReturnType<typeof import('vitest').vi.fn>;
   mockMapToAgentEvent: ReturnType<typeof import('vitest').vi.fn>;

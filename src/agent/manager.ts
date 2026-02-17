@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { AgentConfig, AgentSession, AgentEvent, AgentEventHandler } from './types.js';
 import {
   IAgentAdapter,
-  ISDKAdapter,
   SDKAdapter,
   ActiveQuery,
   SDKAdapterConfig,

@@ -1,6 +1,6 @@
 ### Remove Deprecated ISDKAdapter Interface and Migrate Consumers to IAgentAdapter
 - **Project:** traffic-control
-- **Status:** not started
+- **Status:** done
 - **Priority:** low
 - **Type:** refactor
 - **Scope:** small
