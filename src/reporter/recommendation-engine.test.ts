@@ -334,5 +334,30 @@ describe('RecommendationEngine', () => {
       // Should NOT trigger high_velocity positive (7 < 10)
       expect(recommendations.some(r => r.type === 'high_velocity')).toBe(false);
     });
+
+    it('should use default thresholds when none provided', () => {
+      const defaultEngine = new RecommendationEngine();
+
+      const metrics: ProjectMetrics = {
+        projectId: 'proj-1',
+        projectName: 'Test Project',
+        tasksQueued: 2,
+        tasksInProgress: 1,
+        tasksBlocked: 1, // Exactly at default threshold
+        tasksCompletedToday: 5, // Exactly at default threshold
+        tasksCompletedThisWeek: 5,
+        tokensOpus: 1000,
+        tokensSonnet: 500,
+        sessionsCount: 2,
+        completionRate: 25
+      };
+
+      const recommendations = defaultEngine.analyzeProjectMetrics(metrics);
+
+      // Should trigger with default threshold of 1
+      expect(recommendations.some(r => r.type === 'blocked_tasks')).toBe(true);
+      // Should trigger with default threshold of 5
+      expect(recommendations.some(r => r.type === 'high_velocity')).toBe(true);
+    });
   });
 });
