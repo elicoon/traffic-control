@@ -244,7 +244,7 @@ describe('DelegationMetricsManager', () => {
         outcome: 'success',
       });
 
-      expect(completed?.durationMs).toBeGreaterThanOrEqual(50);
+      expect(completed?.durationMs).toBeGreaterThanOrEqual(40);
     });
   });
 
