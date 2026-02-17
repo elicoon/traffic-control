@@ -7,6 +7,9 @@ import { AgentManager } from '../../agent/manager.js';
 import { Scheduler } from '../../scheduler/scheduler.js';
 import { CapacityStats } from '../../scheduler/capacity-tracker.js';
 import { CostTracker } from '../../analytics/cost-tracker.js';
+import { logger } from '../../logging/index.js';
+
+const log = logger.child('DashboardAPI');
 
 /**
  * System status response interface
@@ -56,7 +59,7 @@ export async function calculateTokenCost(
     const result = await costTracker.calculateCost(model, inputTokens, outputTokens);
     return result.totalCost;
   } catch (error) {
-    console.warn(`CostTracker pricing lookup failed for model "${model}":`, error);
+    log.warn(`CostTracker pricing lookup failed for model "${model}"`, { error });
     return 0;
   }
 }
@@ -95,7 +98,7 @@ export function createStatusHandler(
 
       res.json(status);
     } catch (error) {
-      console.error('Error getting status:', error);
+      log.error('Error getting status', error as Error);
       res.status(500).json({ error: 'Failed to get system status' });
     }
   };
@@ -135,7 +138,7 @@ export function createProjectsHandler(
 
       res.json(summaries);
     } catch (error) {
-      console.error('Error getting projects:', error);
+      log.error('Error getting projects', error as Error);
       res.status(500).json({ error: 'Failed to get projects' });
     }
   };
@@ -167,7 +170,7 @@ export function createProjectHandler(
         tasks,
       });
     } catch (error) {
-      console.error('Error getting project:', error);
+      log.error('Error getting project', error as Error);
       res.status(500).json({ error: 'Failed to get project details' });
     }
   };
@@ -211,7 +214,7 @@ export function createAgentsHandler(
 
       res.json(agentInfo);
     } catch (error) {
-      console.error('Error getting agents:', error);
+      log.error('Error getting agents', error as Error);
       res.status(500).json({ error: 'Failed to get agents' });
     }
   };
@@ -226,7 +229,7 @@ export function createTasksHandler(taskRepo: TaskRepository): RequestHandler {
       const tasks = await taskRepo.getQueued();
       res.json(tasks);
     } catch (error) {
-      console.error('Error getting tasks:', error);
+      log.error('Error getting tasks', error as Error);
       res.status(500).json({ error: 'Failed to get tasks' });
     }
   };
@@ -278,7 +281,7 @@ export function createMetricsHandler(
         projectCosts,
       });
     } catch (error) {
-      console.error('Error getting metrics:', error);
+      log.error('Error getting metrics', error as Error);
       res.status(500).json({ error: 'Failed to get metrics' });
     }
   };
@@ -312,7 +315,7 @@ export function createRecommendationsHandler(
         actionItems: report.actionItems,
       });
     } catch (error) {
-      console.error('Error getting recommendations:', error);
+      log.error('Error getting recommendations', error as Error);
       res.status(500).json({ error: 'Failed to get recommendations' });
     }
   };
@@ -346,7 +349,7 @@ export function createUpdateTaskPriorityHandler(
 
       broadcastEvent('taskUpdated', { taskId, priority });
     } catch (error) {
-      console.error('Error updating task priority:', error);
+      log.error('Error updating task priority', error as Error);
       res.status(500).json({ error: 'Failed to update task priority' });
     }
   };
@@ -373,7 +376,7 @@ export function createPauseProjectHandler(
 
       broadcastEvent('projectPaused', { projectId });
     } catch (error) {
-      console.error('Error pausing project:', error);
+      log.error('Error pausing project', error as Error);
       res.status(500).json({ error: 'Failed to pause project' });
     }
   };
@@ -400,7 +403,7 @@ export function createResumeProjectHandler(
 
       broadcastEvent('projectResumed', { projectId });
     } catch (error) {
-      console.error('Error resuming project:', error);
+      log.error('Error resuming project', error as Error);
       res.status(500).json({ error: 'Failed to resume project' });
     }
   };
