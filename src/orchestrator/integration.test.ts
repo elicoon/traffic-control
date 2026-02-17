@@ -1162,3 +1162,81 @@ describe('Phase 5 Integration', () => {
     });
   });
 });
+
+// =============================================================================
+// MainLoop Startup Smoke Test
+// =============================================================================
+
+describe('MainLoop Startup Smoke Test', () => {
+  let mainLoop: MainLoop;
+  let mockDeps: OrchestrationDependencies;
+  let config: OrchestrationConfig;
+  let tempDir: string;
+  let stateFilePath: string;
+  let mockSlack: SlackIntegration;
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    resetDefaultEventBus();
+
+    // Create temp directory for state file
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tc-startup-test-'));
+    stateFilePath = path.join(tempDir, 'startup-state.json');
+
+    // Mock Slack integration
+    mockSlack = {
+      sendMessage: vi.fn().mockResolvedValue('msg-123'),
+      sendApprovalRequest: vi.fn().mockResolvedValue('msg-456'),
+    };
+
+    config = {
+      pollIntervalMs: 100,
+      maxConcurrentAgents: 5,
+      gracefulShutdownTimeoutMs: 1000,
+      stateFilePath,
+      validateDatabaseOnStartup: false, // Skip DB validation for speed
+      runPreFlightChecks: false, // Skip pre-flight for smoke test
+      requirePreFlightConfirmation: false,
+      dbRetryConfig: {
+        maxRetries: 3,
+        initialDelayMs: 100,
+        maxDelayMs: 1000,
+        backoffMultiplier: 2,
+      },
+      maxConsecutiveDbFailures: 3,
+      enableTaskApproval: false,
+      statusCheckInIntervalMs: 0, // Disable periodic check-ins
+      dailyBudgetUsd: 100,
+      weeklyBudgetUsd: 500,
+      hardStopAtBudgetLimit: false,
+      circuitBreakerFailureThreshold: 5,
+      circuitBreakerResetTimeoutMs: 5000,
+    };
+
+    mockDeps = {
+      scheduler: createMockScheduler() as any,
+      agentManager: createMockAgentManager() as any,
+      backlogManager: createMockBacklogManager() as any,
+      reporter: createMockReporter() as any,
+      capacityTracker: createMockCapacityTracker() as any,
+      learningProvider: createMockLearningProvider() as any,
+      retrospectiveTrigger: createMockRetrospectiveTrigger() as any,
+    };
+
+    mainLoop = new MainLoop(config, mockDeps);
+    mainLoop.setSlackIntegration(mockSlack);
+  });
+
+  afterEach(async () => {
+    if (mainLoop.isRunning()) {
+      await mainLoop.stop();
+    }
+    vi.useRealTimers();
+    await fs.rm(tempDir, { recursive: true, force: true });
+  });
+
+  it('should complete full startup sequence: init → start → tick → stop', async () => {
+    // Test will be implemented in next steps
+    expect(true).toBe(false); // Placeholder to make it fail
+  });
+});
