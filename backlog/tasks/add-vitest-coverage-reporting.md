@@ -1,6 +1,6 @@
 ### Add Vitest Coverage Reporting to Measure Actual Line Coverage
 - **Project:** traffic-control
-- **Status:** not started
+- **Status:** done
 - **Priority:** medium
 - **Type:** test-coverage
 - **Scope:** small

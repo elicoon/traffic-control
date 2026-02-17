@@ -1,6 +1,6 @@
 ### Commit Uncommitted Reporter Structured Logging Changes
 - **Project:** traffic-control
-- **Status:** not started
+- **Status:** done
 - **Priority:** high
 - **Type:** grooming
 - **Scope:** small

@@ -1,6 +1,6 @@
 ### Fix Remaining Flaky Timing Assertion in Logger Test
 - **Project:** traffic-control
-- **Status:** not started
+- **Status:** done
 - **Priority:** high
 - **Type:** bug-fix
 - **Scope:** small

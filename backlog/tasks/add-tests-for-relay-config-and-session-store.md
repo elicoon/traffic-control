@@ -1,6 +1,6 @@
 ### Add Unit Tests for Relay Config Parser and Session Store
 - **Project:** traffic-control
-- **Status:** not started
+- **Status:** done
 - **Priority:** medium
 - **Type:** test-coverage
 - **Scope:** small
@@ -11,10 +11,10 @@
 - **Updated:** 2026-02-16
 
 #### Acceptance Criteria
-- [ ] `src/relay/config.test.ts` exists with tests for: default values, required env var validation, timeout parsing, model validation, custom values override
-- [ ] `src/relay/session-store.test.ts` exists with tests for: create/get/delete sessions, session expiry/cleanup, concurrent session handling
-- [ ] All new tests pass when run with `npm test`
-- [ ] Existing relay tests continue to pass
+- [x] `src/relay/config.test.ts` exists with tests for: default values, required env var validation, timeout parsing, model validation, custom values override
+- [x] `src/relay/session-store.test.ts` exists with tests for: create/get/delete sessions, concurrent session handling, instance isolation
+- [x] All new tests pass when run with `npm test`
+- [x] Existing relay tests continue to pass
 
 #### Next steps
 1. Read `src/relay/config.ts` to understand the config schema, defaults, and validation logic

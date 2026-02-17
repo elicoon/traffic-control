@@ -1,6 +1,6 @@
 ### Enforce priority_confirmed Validation in Scheduler Before Task Assignment
 - **Project:** traffic-control
-- **Status:** not started
+- **Status:** done
 - **Priority:** high
 - **Type:** bug-fix
 - **Scope:** small

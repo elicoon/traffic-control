@@ -1,6 +1,6 @@
 ### Fix Flaky Timing Assertions in delegation-metrics and main-loop Tests
 - **Project:** traffic-control
-- **Status:** not started
+- **Status:** done
 - **Priority:** high
 - **Type:** bug-fix
 - **Scope:** small
@@ -11,9 +11,9 @@
 - **Updated:** 2026-02-16
 
 #### Acceptance Criteria
-- [ ] `delegation-metrics.test.ts` line 247 timing assertion no longer fails intermittently (widen threshold to ≥40ms or use range assertion)
-- [ ] `main-loop.test.ts` line 440 timing assertion uses same fix pattern
-- [ ] Full test suite passes 3 consecutive runs with no flaky failures (`npm test` × 3)
+- [x] `delegation-metrics.test.ts` line 247 timing assertion no longer fails intermittently (widened to ≥40ms)
+- [x] `main-loop.test.ts` line 440 timing assertion uses same fix pattern
+- [x] Full test suite passes 3 consecutive runs with no flaky failures (2049 passed, 0 failed × 3)
 
 #### Next steps
 1. Open `src/orchestrator/delegation-metrics.test.ts` and change `toBeGreaterThanOrEqual(50)` on line 247 to `toBeGreaterThanOrEqual(40)`
