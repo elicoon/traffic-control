@@ -1287,4 +1287,56 @@ describe('MainLoop Startup Smoke Test', () => {
     // (no direct way to test this, but ensuring no errors during stop is sufficient)
     expect(mainLoop.isRunning()).toBe(false);
   });
+
+  it('should validate database health when validateDatabaseOnStartup is true', async () => {
+    // Reconfigure to enable DB validation
+    const configWithDbValidation = {
+      ...config,
+      validateDatabaseOnStartup: true,
+    };
+
+    // Mock DatabaseHealthMonitor.validateOnStartup to return healthy
+    const healthyMainLoop = new MainLoop(configWithDbValidation, mockDeps);
+
+    // Spy on the DB health monitor
+    const dbHealthMonitor = healthyMainLoop.getDatabaseHealthMonitor();
+    const validateSpy = vi.spyOn(dbHealthMonitor, 'validateOnStartup').mockResolvedValue({
+      healthy: true,
+      latencyMs: 50,
+    });
+    const recordHealthySpy = vi.spyOn(dbHealthMonitor, 'recordStartupHealthy');
+
+    // Start should succeed
+    await healthyMainLoop.start();
+
+    // ASSERTIONS
+    expect(validateSpy).toHaveBeenCalledTimes(1);
+    expect(recordHealthySpy).toHaveBeenCalledWith(50);
+    expect(healthyMainLoop.isRunning()).toBe(true);
+
+    await healthyMainLoop.stop();
+  });
+
+  it('should throw error and prevent startup when database is unavailable', async () => {
+    // Reconfigure to enable DB validation
+    const configWithDbValidation = {
+      ...config,
+      validateDatabaseOnStartup: true,
+    };
+
+    const unhealthyMainLoop = new MainLoop(configWithDbValidation, mockDeps);
+
+    // Mock DB health check to fail
+    const dbHealthMonitor = unhealthyMainLoop.getDatabaseHealthMonitor();
+    vi.spyOn(dbHealthMonitor, 'validateOnStartup').mockResolvedValue({
+      healthy: false,
+      error: 'Connection refused',
+    });
+
+    // Start should throw
+    await expect(unhealthyMainLoop.start()).rejects.toThrow('Database unavailable');
+
+    // MainLoop should not be running
+    expect(unhealthyMainLoop.isRunning()).toBe(false);
+  });
 });
