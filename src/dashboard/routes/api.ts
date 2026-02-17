@@ -7,6 +7,7 @@ import { AgentManager } from '../../agent/manager.js';
 import { Scheduler } from '../../scheduler/scheduler.js';
 import { CapacityStats } from '../../scheduler/capacity-tracker.js';
 import { CostTracker } from '../../analytics/cost-tracker.js';
+import { checkHealth } from '../../db/client.js';
 import { logger } from '../../logging/index.js';
 
 const log = logger.child('DashboardAPI');
@@ -378,6 +379,34 @@ export function createPauseProjectHandler(
     } catch (error) {
       log.error('Error pausing project', error as Error);
       res.status(500).json({ error: 'Failed to pause project' });
+    }
+  };
+}
+
+/**
+ * Create handler for GET /health
+ */
+export function createHealthHandler(): RequestHandler {
+  return async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const result = await checkHealth(3000);
+      if (result.healthy) {
+        res.status(200).json({
+          status: 'ok',
+          database: { healthy: true, latencyMs: result.latencyMs },
+        });
+      } else {
+        res.status(503).json({
+          status: 'degraded',
+          database: { healthy: false, error: result.error },
+        });
+      }
+    } catch (error) {
+      log.error('Health check failed unexpectedly', error as Error);
+      res.status(503).json({
+        status: 'degraded',
+        database: { healthy: false, error: error instanceof Error ? error.message : String(error) },
+      });
     }
   };
 }
