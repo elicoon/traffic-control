@@ -6,6 +6,7 @@
 import { Commands, CommandContext, CommandResult } from './commands.js';
 import { ConfigLoader, TrafficControlConfig } from './config-loader.js';
 import { Logger } from './logger.js';
+import pkg from '../../package.json' with { type: 'json' };
 
 /**
  * Parsed command-line arguments
@@ -27,7 +28,7 @@ export interface CLIOptions {
 /**
  * Package version (from package.json)
  */
-const VERSION = '1.0.0';
+const VERSION = pkg.version;
 
 /**
  * Parse command-line arguments into structured format
