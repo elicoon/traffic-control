@@ -1,6 +1,6 @@
 ### Persist Agent Usage Logs to tc_usage_log on Completion
 - **Project:** traffic-control
-- **Status:** not started
+- **Status:** done
 - **Priority:** high
 - **Type:** bug-fix
 - **Scope:** small

@@ -1,6 +1,6 @@
 ### Replace Hardcoded Token Costs in Dashboard with CostTracker from Analytics
 - **Project:** traffic-control
-- **Status:** not started
+- **Status:** done
 - **Priority:** medium
 - **Type:** refactor
 - **Scope:** small

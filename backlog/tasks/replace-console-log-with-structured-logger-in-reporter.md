@@ -1,6 +1,6 @@
 ### Replace console.log/console.error with Structured Logger in Reporter Module
 - **Project:** traffic-control
-- **Status:** not started
+- **Status:** done
 - **Priority:** low
 - **Type:** refactor
 - **Scope:** small

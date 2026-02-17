@@ -1,6 +1,6 @@
 ### Add Unit Tests for Safety Subsystem (CircuitBreaker, SpendMonitor, PreFlight, ProductivityMonitor, TaskApproval)
 - **Project:** traffic-control
-- **Status:** complete
+- **Status:** done
 - **Priority:** high
 - **Type:** test-coverage
 - **Scope:** medium

@@ -2,6 +2,9 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { MetricsCollector, ProjectMetrics, SystemMetrics } from './metrics-collector.js';
 import { RecommendationEngine, RecommendationReport } from './recommendation-engine.js';
 import { sendMessage, formatStatusReport } from '../slack/bot.js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('Reporter');
 
 export interface ReporterConfig {
   morningHour: number;
@@ -136,7 +139,7 @@ export class Reporter {
 
     this.running = true;
     this.scheduleNextReport();
-    console.log('Reporter started');
+    log.info('Reporter started');
   }
 
   /**
@@ -148,7 +151,7 @@ export class Reporter {
       this.schedulerInterval = null;
     }
     this.running = false;
-    console.log('Reporter stopped');
+    log.info('Reporter stopped');
   }
 
   /**
@@ -247,7 +250,7 @@ export class Reporter {
       };
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error(`Failed to send report: ${errorMessage}`);
+      log.error('Failed to send report', err instanceof Error ? err : new Error(errorMessage));
       return {
         sent: false,
         reason: 'error',

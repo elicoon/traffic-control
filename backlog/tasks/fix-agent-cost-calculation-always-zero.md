@@ -1,6 +1,6 @@
 ### Fix Agent SDK Adapter Cost Calculation (costUSD Always 0)
 - **Project:** traffic-control
-- **Status:** not started
+- **Status:** done
 - **Priority:** high
 - **Type:** bug-fix
 - **Scope:** small

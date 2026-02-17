@@ -1,4 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('MetricsCollector');
 
 export interface ProjectMetrics {
   projectId: string;
@@ -135,7 +138,7 @@ export class MetricsCollector {
         metrics.push(projectMetrics);
       } catch (err) {
         // Project may have been deleted during collection, skip it
-        console.warn(`Skipping project ${project.id}: ${err instanceof Error ? err.message : String(err)}`);
+        log.warn('Skipping project', { projectId: project.id, error: err instanceof Error ? err.message : String(err) });
       }
     }
 

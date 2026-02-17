@@ -1,6 +1,6 @@
 ### Close Stale PR #3 and Delete refactor/dashboard-costs-use-cost-tracker Branch
 - **Project:** traffic-control
-- **Status:** not started
+- **Status:** done
 - **Priority:** high
 - **Type:** grooming
 - **Scope:** small
