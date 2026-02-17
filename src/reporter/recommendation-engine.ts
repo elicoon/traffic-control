@@ -27,12 +27,26 @@ export interface RecommendationReport {
   actionItems: string[];
 }
 
+export interface RecommendationThresholds {
+  blockedTasks: number;
+  highVelocity: number;
+  lowOpusUtilization: number;
+  highBlockedSystem: number;
+}
+
 export class RecommendationEngine {
-  // Thresholds for recommendations
-  private readonly BLOCKED_TASKS_THRESHOLD = 1;
-  private readonly HIGH_VELOCITY_THRESHOLD = 5; // Tasks completed today
-  private readonly LOW_OPUS_UTILIZATION_THRESHOLD = 25; // Percentage
-  private readonly HIGH_BLOCKED_SYSTEM_THRESHOLD = 5;
+  // Thresholds for recommendations (configurable via constructor)
+  private readonly thresholds: RecommendationThresholds;
+
+  constructor(thresholds?: Partial<RecommendationThresholds>) {
+    // Merge provided thresholds with defaults
+    this.thresholds = {
+      blockedTasks: thresholds?.blockedTasks ?? 1,
+      highVelocity: thresholds?.highVelocity ?? 5,
+      lowOpusUtilization: thresholds?.lowOpusUtilization ?? 25,
+      highBlockedSystem: thresholds?.highBlockedSystem ?? 5
+    };
+  }
 
   /**
    * Analyzes metrics for a single project and generates recommendations.
@@ -41,7 +55,7 @@ export class RecommendationEngine {
     const recommendations: Recommendation[] = [];
 
     // Check for blocked tasks
-    if (metrics.tasksBlocked >= this.BLOCKED_TASKS_THRESHOLD) {
+    if (metrics.tasksBlocked >= this.thresholds.blockedTasks) {
       recommendations.push({
         type: 'blocked_tasks',
         message: `Project "${metrics.projectName}" has ${metrics.tasksBlocked} blocked tasks - needs attention`,
@@ -66,7 +80,7 @@ export class RecommendationEngine {
     }
 
     // Celebrate high velocity
-    if (metrics.tasksCompletedToday >= this.HIGH_VELOCITY_THRESHOLD) {
+    if (metrics.tasksCompletedToday >= this.thresholds.highVelocity) {
       recommendations.push({
         type: 'high_velocity',
         message: `Project "${metrics.projectName}" completed ${metrics.tasksCompletedToday} tasks today!`,
@@ -115,7 +129,7 @@ export class RecommendationEngine {
     // Check for low Opus utilization
     if (
       systemMetrics.opusUtilization > 0 &&
-      systemMetrics.opusUtilization < this.LOW_OPUS_UTILIZATION_THRESHOLD
+      systemMetrics.opusUtilization < this.thresholds.lowOpusUtilization
     ) {
       recommendations.push({
         type: 'low_opus_utilization',
@@ -125,7 +139,7 @@ export class RecommendationEngine {
     }
 
     // Check for high blocked count system-wide
-    if (systemMetrics.totalTasksBlocked >= this.HIGH_BLOCKED_SYSTEM_THRESHOLD) {
+    if (systemMetrics.totalTasksBlocked >= this.thresholds.highBlockedSystem) {
       recommendations.push({
         type: 'high_blocked_count',
         message: `${systemMetrics.totalTasksBlocked} tasks blocked across all projects - immediate attention required`,

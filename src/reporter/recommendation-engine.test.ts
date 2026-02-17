@@ -303,4 +303,36 @@ describe('RecommendationEngine', () => {
       }
     });
   });
+
+  describe('Custom Thresholds', () => {
+    it('should use custom thresholds when provided', () => {
+      const customEngine = new RecommendationEngine({
+        blockedTasks: 5,
+        highVelocity: 10,
+        lowOpusUtilization: 50,
+        highBlockedSystem: 10
+      });
+
+      const metrics: ProjectMetrics = {
+        projectId: 'proj-1',
+        projectName: 'Test Project',
+        tasksQueued: 2,
+        tasksInProgress: 1,
+        tasksBlocked: 3, // Below custom threshold of 5
+        tasksCompletedToday: 7, // Below custom threshold of 10
+        tasksCompletedThisWeek: 7,
+        tokensOpus: 1000,
+        tokensSonnet: 500,
+        sessionsCount: 2,
+        completionRate: 25
+      };
+
+      const recommendations = customEngine.analyzeProjectMetrics(metrics);
+
+      // Should NOT trigger blocked_tasks warning (3 < 5)
+      expect(recommendations.some(r => r.type === 'blocked_tasks')).toBe(false);
+      // Should NOT trigger high_velocity positive (7 < 10)
+      expect(recommendations.some(r => r.type === 'high_velocity')).toBe(false);
+    });
+  });
 });
