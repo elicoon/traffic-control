@@ -169,9 +169,17 @@ describe('MainLoop', () => {
   let config: OrchestrationConfig;
   let deps: OrchestrationDependencies;
 
+  let getClientSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+
+    // Prevent BudgetTracker auto-instantiation from hitting the real Supabase client in tests.
+    // Tests that need a BudgetTracker pass one explicitly via deps.
+    getClientSpy = vi.spyOn(clientModule, 'getClient').mockImplementation(() => {
+      throw new Error('No Supabase client in tests');
+    });
 
     config = createDefaultConfig();
     deps = createMockDependencies();
@@ -184,6 +192,7 @@ describe('MainLoop', () => {
       await mainLoop.stop();
     }
     vi.useRealTimers();
+    getClientSpy.mockRestore();
   });
 
   describe('constructor', () => {
@@ -1072,6 +1081,196 @@ describe('MainLoop', () => {
 
       await loopWithBus.stop();
       waitForHealthySpy.mockRestore();
+    });
+  });
+
+  describe('BudgetTracker integration', () => {
+    const createMockBudgetTracker = () => ({
+      checkBudgetAlerts: vi.fn().mockResolvedValue([]),
+    });
+
+    const createCriticalAlert = () => ({
+      budget: { id: 'budget-1', periodType: 'daily', budgetUsd: 10, alertThresholdPercent: 80, projectId: undefined, createdAt: new Date(), updatedAt: new Date() },
+      status: { budgetId: 'budget-1', periodType: 'daily', budgetUsd: 10, spentUsd: 12, remainingUsd: 0, percentUsed: 120, projectedTotalUsd: 12, onTrack: false, alertTriggered: true, alertThresholdPercent: 80, periodStart: new Date(), periodEnd: new Date(), projectId: undefined },
+      severity: 'critical' as const,
+      message: 'Budget exceeded! 120.0% of daily budget used.',
+    });
+
+    it('no BudgetTracker in deps → constructor warns on getClient failure, existing behavior unchanged', async () => {
+      // getClient is already mocked to throw in beforeEach — BudgetTracker init silently fails
+      const depsNoBudget = createMockDependencies();
+      const loop = new MainLoop(config, depsNoBudget);
+      vi.mocked(depsNoBudget.scheduler.canSchedule).mockReturnValue(true);
+
+      await loop.start();
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      // Scheduling should still proceed (budget check skipped when no budgetTracker)
+      expect(depsNoBudget.scheduler.scheduleNext).toHaveBeenCalled();
+
+      await loop.stop();
+    });
+
+    it('budget OK → tasks scheduled normally', async () => {
+      const mockBudgetTracker = createMockBudgetTracker();
+      const depsWithBudget = { ...createMockDependencies(), budgetTracker: mockBudgetTracker as any };
+      vi.mocked(depsWithBudget.scheduler.canSchedule).mockReturnValue(true);
+
+      const loop = new MainLoop(config, depsWithBudget);
+      await loop.start();
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      expect(mockBudgetTracker.checkBudgetAlerts).toHaveBeenCalled();
+      expect(depsWithBudget.scheduler.scheduleNext).toHaveBeenCalled();
+
+      await loop.stop();
+    });
+
+    it('budget exceeded → scheduling skipped, Slack notified, budgetPaused = true', async () => {
+      const mockBudgetTracker = createMockBudgetTracker();
+      mockBudgetTracker.checkBudgetAlerts.mockResolvedValue([createCriticalAlert()]);
+
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const depsWithBudget = { ...createMockDependencies(), budgetTracker: mockBudgetTracker as any };
+      vi.mocked(depsWithBudget.scheduler.canSchedule).mockReturnValue(true);
+
+      const loop = new MainLoop(config, depsWithBudget);
+      loop.setSlackIntegration(mockSlack);
+
+      // Set TC_SLACK_CHANNEL so Slack notification fires
+      const origChannel = process.env.TC_SLACK_CHANNEL;
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      await loop.start();
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      // Scheduling should be skipped
+      expect(depsWithBudget.scheduler.scheduleNext).not.toHaveBeenCalled();
+
+      // Flush microtasks so the fire-and-forget sendMessage promise resolves
+      await Promise.resolve();
+      expect(mockSlack.sendMessage).toHaveBeenCalledWith(
+        'C_TEST_CHANNEL',
+        expect.stringContaining('Budget Exceeded')
+      );
+
+      // budgetPaused should be true
+      expect(loop.getStats().safety.budgetPaused).toBe(true);
+
+      process.env.TC_SLACK_CHANNEL = origChannel;
+      await loop.stop();
+    });
+
+    it('budget exceeded on two ticks → Slack notified only once (dedup)', async () => {
+      const mockBudgetTracker = createMockBudgetTracker();
+      mockBudgetTracker.checkBudgetAlerts.mockResolvedValue([createCriticalAlert()]);
+
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const depsWithBudget = { ...createMockDependencies(), budgetTracker: mockBudgetTracker as any };
+
+      const loop = new MainLoop(config, depsWithBudget);
+      loop.setSlackIntegration(mockSlack);
+
+      const origChannel = process.env.TC_SLACK_CHANNEL;
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      await loop.start();
+      // Two ticks
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs * 2);
+      // Flush microtasks so fire-and-forget sendMessage promises resolve
+      await Promise.resolve();
+
+      // Slack called only once despite two ticks
+      const budgetExceededCalls = mockSlack.sendMessage.mock.calls.filter(
+        call => typeof call[1] === 'string' && call[1].includes('Budget Exceeded')
+      );
+      expect(budgetExceededCalls).toHaveLength(1);
+
+      process.env.TC_SLACK_CHANNEL = origChannel;
+      await loop.stop();
+    });
+
+    it('budget recovered after exceeded → Slack notified, scheduling resumes', async () => {
+      const mockBudgetTracker = createMockBudgetTracker();
+      // First tick: exceeded
+      mockBudgetTracker.checkBudgetAlerts
+        .mockResolvedValueOnce([createCriticalAlert()])
+        // Second tick: recovered
+        .mockResolvedValueOnce([])
+        // Third tick: still OK
+        .mockResolvedValue([]);
+
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const depsWithBudget = { ...createMockDependencies(), budgetTracker: mockBudgetTracker as any };
+      vi.mocked(depsWithBudget.scheduler.canSchedule).mockReturnValue(true);
+
+      const loop = new MainLoop(config, depsWithBudget);
+      loop.setSlackIntegration(mockSlack);
+
+      const origChannel = process.env.TC_SLACK_CHANNEL;
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      await loop.start();
+
+      // Tick 1: budget exceeded
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+      expect(depsWithBudget.scheduler.scheduleNext).not.toHaveBeenCalled();
+      expect(loop.getStats().safety.budgetPaused).toBe(true);
+
+      // Tick 2: budget recovered
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+      // Flush microtasks so fire-and-forget sendMessage promises resolve
+      await Promise.resolve();
+      expect(loop.getStats().safety.budgetPaused).toBe(false);
+
+      // Slack should have recovery message
+      const recoveryCalls = mockSlack.sendMessage.mock.calls.filter(
+        call => typeof call[1] === 'string' && call[1].includes('Budget Recovered')
+      );
+      expect(recoveryCalls).toHaveLength(1);
+
+      // Tick 3: scheduling resumes
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+      expect(depsWithBudget.scheduler.scheduleNext).toHaveBeenCalled();
+
+      process.env.TC_SLACK_CHANNEL = origChannel;
+      await loop.stop();
+    });
+
+    it('BudgetTracker.checkBudgetAlerts throws → scheduling continues (fail-safe)', async () => {
+      const mockBudgetTracker = createMockBudgetTracker();
+      mockBudgetTracker.checkBudgetAlerts.mockRejectedValue(new Error('DB connection failed'));
+
+      const depsWithBudget = { ...createMockDependencies(), budgetTracker: mockBudgetTracker as any };
+      vi.mocked(depsWithBudget.scheduler.canSchedule).mockReturnValue(true);
+
+      const loop = new MainLoop(config, depsWithBudget);
+      await loop.start();
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      // Scheduling should still proceed despite BudgetTracker error
+      expect(depsWithBudget.scheduler.scheduleNext).toHaveBeenCalled();
+
+      await loop.stop();
+    });
+
+    it('getBudgetTracker() returns the injected BudgetTracker', () => {
+      const mockBudgetTracker = createMockBudgetTracker();
+      const depsWithBudget = { ...createMockDependencies(), budgetTracker: mockBudgetTracker as any };
+      const loop = new MainLoop(config, depsWithBudget);
+      expect(loop.getBudgetTracker()).toBe(mockBudgetTracker);
     });
   });
 });

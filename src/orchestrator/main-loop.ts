@@ -15,6 +15,7 @@ import {
   getClient,
 } from '../db/client.js';
 import { EventBus } from '../events/event-bus.js';
+import { createEvent } from '../events/event-types.js';
 import { logger } from '../logging/index.js';
 import { DatabaseHealthMonitor } from './database-health-monitor.js';
 import { PreFlightChecker, PreFlightConfig, PreFlightResult } from './pre-flight.js';
@@ -24,6 +25,7 @@ import {
   ProductivityMonitor,
   CircuitBreaker,
 } from './safety/index.js';
+import { BudgetTracker } from '../analytics/budget-tracker.js';
 
 const log = logger.child('MainLoop');
 
@@ -88,6 +90,8 @@ export interface OrchestrationDependencies {
   taskRepository?: TaskRepository;
   /** Optional usage log repository for persisting agent usage data */
   usageLogRepository?: UsageLogRepository;
+  /** Optional BudgetTracker for period-based budget enforcement from tc_budgets table */
+  budgetTracker?: BudgetTracker;
 }
 
 /**
@@ -129,6 +133,7 @@ export interface OrchestrationStats {
       consecutiveFailures: number;
     };
     pendingApprovals: number;
+    budgetPaused: boolean;
   };
 }
 
@@ -187,6 +192,7 @@ export class MainLoop {
   private circuitBreaker: CircuitBreaker;
   private slackIntegration: SlackIntegration | null = null;
   private consecutiveFailures: number = 0;
+  private budgetPaused: boolean = false;
 
   constructor(config: Partial<OrchestrationConfig>, deps: OrchestrationDependencies, eventBus?: EventBus) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -223,6 +229,16 @@ export class MainLoop {
       resetTimeoutMs: this.config.circuitBreakerResetTimeoutMs,
       autoReset: true,
     });
+
+    // Initialize BudgetTracker with Supabase client if not provided
+    if (!this.deps.budgetTracker) {
+      try {
+        const supabaseClient = getClient();
+        this.deps.budgetTracker = new BudgetTracker(supabaseClient);
+      } catch (err) {
+        log.warn('BudgetTracker could not be initialized (no Supabase client)', { error: String(err) });
+      }
+    }
 
     this.setupAgentEventHandlers();
     this.setupSafetyCallbacks();
@@ -888,6 +904,7 @@ export class MainLoop {
           consecutiveFailures: this.consecutiveFailures,
         },
         pendingApprovals: approvalStats.pending,
+        budgetPaused: this.budgetPaused,
       },
     };
   }
@@ -1134,6 +1151,14 @@ export class MainLoop {
       return;
     }
 
+    // Check DB-backed budget limits (BudgetTracker)
+    if (this.deps.budgetTracker) {
+      const budgetExceeded = await this.checkBudgetLimits();
+      if (budgetExceeded) {
+        return;
+      }
+    }
+
     try {
       // If in degraded mode, try to recover first
       if (this.dbHealthMonitor.isDegraded()) {
@@ -1191,6 +1216,90 @@ export class MainLoop {
   }
 
   /**
+   * Checks period budgets via BudgetTracker. Returns true if budget exceeded (tick should stop).
+   * Handles budget:exceeded → pause + notify, and budget:recovered → resume + notify.
+   */
+  private async checkBudgetLimits(): Promise<boolean> {
+    if (!this.deps.budgetTracker) return false;
+
+    try {
+      const alerts = await this.deps.budgetTracker.checkBudgetAlerts();
+      const criticalAlerts = alerts.filter(a => a.severity === 'critical');
+
+      if (criticalAlerts.length > 0) {
+        if (!this.budgetPaused) {
+          this.budgetPaused = true;
+          const alert = criticalAlerts[0];
+
+          log.warn('Budget exceeded, pausing task scheduling', {
+            periodType: alert.status.periodType,
+            percentUsed: alert.status.percentUsed,
+            spentUsd: alert.status.spentUsd,
+            budgetUsd: alert.status.budgetUsd,
+          });
+
+          // Emit event
+          if (this.eventBus) {
+            this.eventBus.emit(createEvent('budget:exceeded', {
+              periodType: alert.status.periodType,
+              budgetUsd: alert.status.budgetUsd,
+              spentUsd: alert.status.spentUsd,
+              percentUsed: alert.status.percentUsed,
+              projectId: alert.status.projectId,
+            }));
+          }
+
+          // Notify via Slack
+          if (this.slackIntegration) {
+            const channelId = process.env.TC_SLACK_CHANNEL || '';
+            if (channelId) {
+              this.slackIntegration.sendMessage(
+                channelId,
+                `*[!] Budget Exceeded*\n${alert.message}\n\nTask scheduling paused until next budget period.`
+              ).catch(err => log.error('Failed to send budget exceeded notification', err instanceof Error ? err : new Error(String(err))));
+            }
+          }
+        }
+        return true; // Budget exceeded, stop this tick
+      }
+
+      // Budget is within limits — check if we're recovering
+      if (this.budgetPaused) {
+        this.budgetPaused = false;
+
+        log.info('Budget recovered, resuming task scheduling');
+
+        // Emit recovery event
+        if (this.eventBus) {
+          this.eventBus.emit(createEvent('budget:recovered', {
+            periodType: 'daily',
+            budgetUsd: 0,
+            spentUsd: 0,
+            percentUsed: 0,
+          }));
+        }
+
+        // Notify via Slack
+        if (this.slackIntegration) {
+          const channelId = process.env.TC_SLACK_CHANNEL || '';
+          if (channelId) {
+            this.slackIntegration.sendMessage(
+              channelId,
+              '*Budget Recovered*\nTask scheduling has resumed.'
+            ).catch(err => log.error('Failed to send budget recovered notification', err instanceof Error ? err : new Error(String(err))));
+          }
+        }
+      }
+
+      return false; // Budget OK, continue scheduling
+    } catch (err) {
+      // Don't block scheduling on BudgetTracker errors
+      log.warn('BudgetTracker check failed, continuing without budget enforcement', { error: String(err) });
+      return false;
+    }
+  }
+
+  /**
    * Callback for approval-aware scheduling (checks task approval before scheduling)
    */
   private async approvalAwareScheduleCallback(task: Task): Promise<boolean> {
@@ -1211,6 +1320,13 @@ export class MainLoop {
     }
     // Task is approved or doesn't require approval
     return true;
+  }
+
+  /**
+   * Gets the BudgetTracker instance (if initialized)
+   */
+  getBudgetTracker(): BudgetTracker | undefined {
+    return this.deps.budgetTracker;
   }
 
   /**

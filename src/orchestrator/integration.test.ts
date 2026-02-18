@@ -141,6 +141,7 @@ describe('Phase 5 Integration', () => {
       capacityTracker: createMockCapacityTracker() as any,
       learningProvider: createMockLearningProvider() as any,
       retrospectiveTrigger: createMockRetrospectiveTrigger() as any,
+      budgetTracker: { checkBudgetAlerts: vi.fn().mockResolvedValue([]) } as any,
     };
 
     mainLoop = new MainLoop(config, mockDeps);
@@ -1224,6 +1225,7 @@ describe('MainLoop Startup Smoke Test', () => {
       capacityTracker: createMockCapacityTracker() as any,
       learningProvider: createMockLearningProvider() as any,
       retrospectiveTrigger: createMockRetrospectiveTrigger() as any,
+      budgetTracker: { checkBudgetAlerts: vi.fn().mockResolvedValue([]) } as any,
     };
 
     mainLoop = new MainLoop(config, mockDeps);

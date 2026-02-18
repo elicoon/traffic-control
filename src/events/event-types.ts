@@ -39,7 +39,10 @@ export type EventType =
   // Database events
   | 'database:healthy'
   | 'database:degraded'
-  | 'database:recovered';
+  | 'database:recovered'
+  // Budget events
+  | 'budget:exceeded'
+  | 'budget:recovered';
 
 /**
  * Set of all valid event types for runtime validation
@@ -65,6 +68,8 @@ const ALL_EVENT_TYPES: Set<string> = new Set([
   'database:healthy',
   'database:degraded',
   'database:recovered',
+  'budget:exceeded',
+  'budget:recovered',
 ]);
 
 /**
@@ -266,6 +271,27 @@ export interface DatabaseRecoveredPayload {
   downtimeMs: number;
 }
 
+/**
+ * Payload for budget:exceeded event
+ */
+export interface BudgetExceededPayload {
+  periodType: 'daily' | 'weekly' | 'monthly';
+  budgetUsd: number;
+  spentUsd: number;
+  percentUsed: number;
+  projectId?: string;
+}
+
+/**
+ * Payload for budget:recovered event
+ */
+export interface BudgetRecoveredPayload {
+  periodType: 'daily' | 'weekly' | 'monthly';
+  budgetUsd: number;
+  spentUsd: number;
+  percentUsed: number;
+}
+
 // ============================================================================
 // Event Payload Mapping
 // ============================================================================
@@ -294,6 +320,8 @@ export interface EventPayloads {
   'database:healthy': DatabaseHealthyPayload;
   'database:degraded': DatabaseDegradedPayload;
   'database:recovered': DatabaseRecoveredPayload;
+  'budget:exceeded': BudgetExceededPayload;
+  'budget:recovered': BudgetRecoveredPayload;
 }
 
 /**
