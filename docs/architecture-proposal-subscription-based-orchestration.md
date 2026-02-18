@@ -14,7 +14,7 @@ This document proposes architectural approaches for TrafficControl to leverage C
 
 **Key Finding:** As of January 2026, Anthropic has actively blocked third-party tools from using subscription OAuth tokens for programmatic automation. This is a deliberate policy to separate consumer subscriptions from commercial API usage. However, several legitimate and semi-legitimate approaches exist.
 
-**Important Clarification:** This system is a **personal orchestrator** for a single user (Eli), not a multi-tenant platform. This significantly simplifies the architecture and changes which approaches are appropriate.
+**Important Clarification:** This system is a **personal orchestrator** for a single operator, not a multi-tenant platform. This significantly simplifies the architecture and changes which approaches are appropriate.
 
 ---
 

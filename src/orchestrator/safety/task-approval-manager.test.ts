@@ -164,7 +164,7 @@ describe('TaskApprovalManager', () => {
       const task = makeTask({ id: 'reject-2' });
       await manager.requestApproval(task);
 
-      manager.handleResponse('reject-2', false, 'eli', 'too expensive');
+      manager.handleResponse('reject-2', false, 'testuser', 'too expensive');
 
       const approval = manager.getPendingApproval('reject-2');
       expect(approval?.rejectionReason).toBe('too expensive');
@@ -177,7 +177,7 @@ describe('TaskApprovalManager', () => {
       const task = makeTask({ id: 'reject-cb' });
       await manager.requestApproval(task);
 
-      manager.handleResponse('reject-cb', false, 'eli', 'not now');
+      manager.handleResponse('reject-cb', false, 'testuser', 'not now');
 
       expect(callback).toHaveBeenCalledOnce();
       expect(callback).toHaveBeenCalledWith(
@@ -185,7 +185,7 @@ describe('TaskApprovalManager', () => {
           taskId: 'reject-cb',
           approved: false,
           reason: 'not now',
-          respondedBy: 'eli',
+          respondedBy: 'testuser',
         })
       );
     });
@@ -243,7 +243,7 @@ describe('TaskApprovalManager', () => {
       const task = makeTask({ id: 'approve-1' });
       await manager.requestApproval(task);
 
-      manager.handleResponse('approve-1', true, 'eli');
+      manager.handleResponse('approve-1', true, 'testuser');
 
       const approval = manager.getPendingApproval('approve-1');
       expect(approval?.status).toBe('approved');
@@ -256,7 +256,7 @@ describe('TaskApprovalManager', () => {
       const task = makeTask({ id: 'dup-1' });
       await manager.requestApproval(task);
 
-      manager.handleResponse('dup-1', true, 'eli');
+      manager.handleResponse('dup-1', true, 'testuser');
       manager.handleResponse('dup-1', false, 'bob', 'changed mind');
 
       // Only the first response should trigger the callback
@@ -275,14 +275,14 @@ describe('TaskApprovalManager', () => {
       expect(callback).toHaveBeenCalledOnce(); // timeout callback
 
       // Late response should be ignored
-      manager.handleResponse('late-1', true, 'eli');
+      manager.handleResponse('late-1', true, 'testuser');
       expect(callback).toHaveBeenCalledOnce(); // still only the timeout call
       expect(manager.getPendingApproval('late-1')?.status).toBe('timeout');
     });
 
     it('ignores response for unknown task', () => {
       // Should not throw
-      manager.handleResponse('nonexistent', true, 'eli');
+      manager.handleResponse('nonexistent', true, 'testuser');
     });
   });
 
@@ -295,7 +295,7 @@ describe('TaskApprovalManager', () => {
 
       expect(manager.isApproved('approved-check')).toBe(false);
 
-      manager.handleResponse('approved-check', true, 'eli');
+      manager.handleResponse('approved-check', true, 'testuser');
 
       expect(manager.isApproved('approved-check')).toBe(true);
     });
@@ -303,7 +303,7 @@ describe('TaskApprovalManager', () => {
     it('returns false for rejected tasks', async () => {
       const task = makeTask({ id: 'rejected-check' });
       await manager.requestApproval(task);
-      manager.handleResponse('rejected-check', false, 'eli');
+      manager.handleResponse('rejected-check', false, 'testuser');
 
       expect(manager.isApproved('rejected-check')).toBe(false);
     });
@@ -352,8 +352,8 @@ describe('TaskApprovalManager', () => {
       await manager.requestApproval(task3);
 
       // Approve one, reject another
-      manager.handleResponse('p1', true, 'eli');
-      manager.handleResponse('p2', false, 'eli');
+      manager.handleResponse('p1', true, 'testuser');
+      manager.handleResponse('p2', false, 'testuser');
 
       const pending = manager.getAllPending();
       expect(pending).toHaveLength(1);
@@ -398,8 +398,8 @@ describe('TaskApprovalManager', () => {
       await manager.requestApproval(t3);
       await manager.requestApproval(t4);
 
-      manager.handleResponse('s1', true, 'eli');     // approved
-      manager.handleResponse('s2', false, 'eli');     // rejected
+      manager.handleResponse('s1', true, 'testuser');     // approved
+      manager.handleResponse('s2', false, 'testuser');     // rejected
       vi.advanceTimersByTime(300_000);                // s3 and s4 time out
 
       const stats = manager.getStats();
@@ -484,7 +484,7 @@ describe('TaskApprovalManager', () => {
       await manager.requestApproval(task);
 
       // Should not throw even though badCallback throws
-      manager.handleResponse('cb-err', true, 'eli');
+      manager.handleResponse('cb-err', true, 'testuser');
 
       expect(badCallback).toHaveBeenCalledOnce();
       expect(goodCallback).toHaveBeenCalledOnce();
@@ -521,7 +521,7 @@ describe('TaskApprovalManager', () => {
 
       unsubscribe();
 
-      manager.handleResponse('unsub-1', true, 'eli');
+      manager.handleResponse('unsub-1', true, 'testuser');
 
       expect(callback).not.toHaveBeenCalled();
     });
@@ -537,7 +537,7 @@ describe('TaskApprovalManager', () => {
 
       const task = makeTask({ id: 'unsub-2' });
       await manager.requestApproval(task);
-      manager.handleResponse('unsub-2', true, 'eli');
+      manager.handleResponse('unsub-2', true, 'testuser');
 
       expect(callback1).not.toHaveBeenCalled();
       expect(callback2).toHaveBeenCalledOnce();
