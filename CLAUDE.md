@@ -123,7 +123,7 @@ Even after confirmation:
 
 TrafficControl is an orchestration system for managing multiple Claude Code agents across concurrent projects. The goal is to maximize Claude usage capacity (100% utilization of session and weekly limits) while minimizing manual intervention.
 
-**Current Status:** Phase 5 complete. Core orchestration, Slack integration (connected to `#all-traffic-control`), and resilience features implemented.
+**Current Status:** Phase 5 complete. Core orchestration, Slack integration (connected to `#your-channel-name`), and resilience features implemented.
 
 ## Interaction Methods
 
@@ -182,8 +182,8 @@ All data is stored in Supabase. Tables are prefixed with `tc_`:
 
 | Project | ID |
 |---------|-----|
-| TrafficControl Internal | `YOUR_PROJECT_ID` |
-| TrafficControl Infrastructure | `YOUR_INFRA_PROJECT_ID` |
+| TrafficControl Internal | `<YOUR_PROJECT_ID>` |
+| TrafficControl Infrastructure | `<YOUR_INFRASTRUCTURE_PROJECT_ID>` |
 
 ---
 
@@ -208,7 +208,7 @@ INSERT INTO tc_tasks (
   estimated_sessions_opus,
   estimated_sessions_sonnet
 ) VALUES (
-  'YOUR_PROJECT_ID',  -- TrafficControl Internal project
+  '<YOUR_PROJECT_ID>',  -- TrafficControl Internal project
   'Your task title',
   'Detailed description of what needs to be done',
   50,           -- Priority (higher = more urgent, default 0)
@@ -225,7 +225,7 @@ INSERT INTO tc_tasks (
 ```sql
 INSERT INTO tc_tasks (project_id, title, description)
 VALUES (
-  'YOUR_PROJECT_ID',
+  '<YOUR_PROJECT_ID>',
   'Task title',
   'Task description'
 );
@@ -245,7 +245,7 @@ INSERT INTO tc_proposals (
   estimated_sessions_sonnet,
   reasoning
 ) VALUES (
-  'YOUR_PROJECT_ID',
+  '<YOUR_PROJECT_ID>',
   'Proposed feature title',
   'What this feature does and why',
   'high',       -- Impact: high, medium, low
@@ -401,7 +401,7 @@ This requirement ensures:
 ### View Backlog
 ```sql
 SELECT title, status, priority, priority_confirmed, tags FROM tc_tasks
-WHERE project_id = 'YOUR_PROJECT_ID'
+WHERE project_id = '<YOUR_PROJECT_ID>'
 AND status IN ('queued', 'in_progress')
 ORDER BY priority DESC;
 ```
@@ -474,7 +474,7 @@ For multi-file changes across independent components, spawn parallel Task agents
 - **Question routing** - Routes agent questions to Slack threads
 - **Thread tracking** - Maintains conversation context
 - **Notification batching** - Efficient message delivery
-- **Channel**: `#all-traffic-control` (ID: `YOUR_CHANNEL_ID`)
+- **Channel**: `#your-channel-name` (ID: `<YOUR_CHANNEL_ID>`)
 - **Bot user**: `@trafficcontrol`
 
 ### Agent Management
