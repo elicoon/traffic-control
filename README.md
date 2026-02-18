@@ -236,7 +236,7 @@ traffic-control/
 ├── CLAUDE.md                 # AI assistant instructions
 ├── agents.md                 # Agent behavior guidelines
 ├── CAPABILITIES.md           # Tools & skills reference
-└── traffic-control.md         # Core philosophy
+└── traffic-control-initial-spec.md         # Core philosophy
 ```
 
 ## How It Works

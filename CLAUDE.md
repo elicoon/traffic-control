@@ -156,7 +156,7 @@ traffic-control/
 ├── CLAUDE.md            # This file
 ├── agents.md            # Agent behavior guidelines
 ├── CAPABILITIES.md      # Tools & skills reference
-└── traffic-control.md    # Core philosophy & principles
+└── traffic-control-initial-spec.md    # Core philosophy & principles
 ```
 
 ## Database (Supabase)
@@ -587,7 +587,7 @@ When making changes to TrafficControl or claiming work is complete, use this che
 
 ---
 
-## Core Principles (from traffic-control.md)
+## Core Principles (from traffic-control-initial-spec.md)
 
 1. **Bias Toward Action** - Always prefer action over inaction. Work should never stop.
 2. **Continuous Learning** - After failures, create retrospectives and implement learnings.
