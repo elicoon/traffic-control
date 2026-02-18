@@ -4,3 +4,13 @@ dist/
 *.log
 coverage/
 .worktrees/
+
+# Personal operational data (instance-specific, not for public repos)
+docs/plans/
+backlog/
+learnings/
+retrospectives/
+task-reports/
+
+# TypeScript build info (generated artifact)
+tsconfig.tsbuildinfo
