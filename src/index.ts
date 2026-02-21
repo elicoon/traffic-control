@@ -14,7 +14,7 @@ async function main() {
 
   // Handle graceful shutdown
   process.on('SIGINT', async () => {
-    console.log('\nShutting down...');
+    log.info('Shutting down');
     await orchestrator.stop();
     process.exit(0);
   });
@@ -23,6 +23,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error('Fatal error:', err);
+  log.error('Fatal error', err);
   process.exit(1);
 });
