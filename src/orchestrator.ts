@@ -9,6 +9,9 @@ import { ContextBudgetManager, ContextEntry, DelegationMetricsManager, PreFlight
 import { DashboardServer } from './dashboard/index.js';
 import { MetricsCollector, RecommendationEngine } from './reporter/index.js';
 import { CostTracker } from './analytics/cost-tracker.js';
+import { logger } from './logging/index.js';
+
+const log = logger.child('Orchestrator');
 
 interface PendingQuestion {
   sessionId: string;
@@ -99,14 +102,14 @@ export class Orchestrator {
           outcome: 'success',
         });
         if (delegation) {
-          console.log(`[Orchestrator] Delegation completed successfully: task=${delegation.taskId}, duration=${delegation.durationMs}ms, questions=${delegation.questionCount}`);
+          log.info('Delegation completed successfully', { taskId: delegation.taskId, durationMs: delegation.durationMs, questionCount: delegation.questionCount });
         }
 
         // Remove context budget entries for this task
         if (session.taskId) {
           const removed = this.contextBudget.removeEntriesByReference(session.taskId);
           if (removed > 0) {
-            console.log(`[Orchestrator] Removed ${removed} context entries for completed task ${session.taskId}`);
+            log.info('Removed context entries for completed task', { removed, taskId: session.taskId });
           }
         }
       }
@@ -125,14 +128,14 @@ export class Orchestrator {
           errorMessage,
         });
         if (delegation) {
-          console.log(`[Orchestrator] Delegation failed: task=${delegation.taskId}, duration=${delegation.durationMs}ms, questions=${delegation.questionCount}, error=${errorMessage}`);
+          log.error('Delegation failed', { taskId: delegation.taskId, durationMs: delegation.durationMs, questionCount: delegation.questionCount, error: errorMessage });
         }
 
         // Remove context budget entries for this task
         if (session.taskId) {
           const removed = this.contextBudget.removeEntriesByReference(session.taskId);
           if (removed > 0) {
-            console.log(`[Orchestrator] Removed ${removed} context entries for failed task ${session.taskId}`);
+            log.info('Removed context entries for failed task', { removed, taskId: session.taskId });
           }
         }
       }
@@ -146,11 +149,11 @@ export class Orchestrator {
       const confirmationThreadTs = this.preFlightChecker.getConfirmationThreadTs();
       if (confirmationThreadTs && threadTs === confirmationThreadTs) {
         if (lowerText === 'confirm' || lowerText === 'yes' || lowerText === 'start') {
-          console.log(`[Orchestrator] Received confirmation from user ${userId}`);
+          log.info('Received confirmation from user', { userId });
           this.preFlightChecker.confirm(true);
           return;
         } else if (lowerText === 'abort' || lowerText === 'cancel' || lowerText === 'no' || lowerText === 'stop') {
-          console.log(`[Orchestrator] Received abort command from user ${userId}`);
+          log.info('Received abort command from user', { userId });
           this.preFlightChecker.confirm(false);
           return;
         }
@@ -250,36 +253,35 @@ export class Orchestrator {
   async start(): Promise<void> {
     if (this.running) return;
 
-    console.log('Starting TrafficControl orchestrator...');
+    log.info('Starting TrafficControl orchestrator');
 
     // Setup Slack handlers and start bot
     setupHandlers();
     await startBot();
 
     // Run pre-flight checks BEFORE starting the main loop
-    console.log('\n=== Running Pre-Flight Checks ===\n');
+    log.info('Running pre-flight checks');
     try {
       const preFlightResult = await this.preFlightChecker.runChecks();
 
       // Send summary to Slack and wait for confirmation
       await this.preFlightChecker.sendSummaryToSlack();
 
-      console.log(`Pre-flight checks complete: ${preFlightResult.queuedTaskCount} tasks queued`);
+      log.info('Pre-flight checks complete', { queuedTaskCount: preFlightResult.queuedTaskCount });
       if (preFlightResult.warnings.length > 0) {
-        console.log(`Warnings: ${preFlightResult.warnings.length}`);
+        log.warn('Pre-flight warnings found', { count: preFlightResult.warnings.length });
         for (const w of preFlightResult.warnings) {
-          console.log(`  [${w.severity}] ${w.message}`);
+          log.warn('Pre-flight warning', { severity: w.severity, message: w.message });
         }
       }
 
-      console.log('\nWaiting for confirmation via Slack...');
-      console.log('Reply "confirm" to start or "abort" to cancel.\n');
+      log.info('Waiting for confirmation via Slack, reply "confirm" to start or "abort" to cancel');
 
       // Wait for user to confirm via Slack
       const confirmed = await this.preFlightChecker.waitForConfirmation();
 
       if (!confirmed) {
-        console.log('Startup aborted by user or timeout. Exiting.');
+        log.warn('Startup aborted by user or timeout');
         await sendMessage({
           channel: this.slackChannel,
           text: '❌ *Orchestrator startup aborted.* No agents will be spawned.',
@@ -288,7 +290,7 @@ export class Orchestrator {
       }
 
       this.confirmed = true;
-      console.log('Confirmation received! Starting orchestrator...\n');
+      log.info('Confirmation received, starting orchestrator');
 
       await sendMessage({
         channel: this.slackChannel,
@@ -296,7 +298,7 @@ export class Orchestrator {
       });
 
     } catch (error) {
-      console.error('Pre-flight checks failed:', error);
+      log.error('Pre-flight checks failed', error instanceof Error ? error : { error: String(error) });
       await sendMessage({
         channel: this.slackChannel,
         text: `❌ *Pre-flight checks failed:* ${error instanceof Error ? error.message : String(error)}`,
@@ -320,9 +322,9 @@ export class Orchestrator {
           costTracker: new CostTracker(this.supabaseClient),
         });
         await this.dashboardServer.start();
-        console.log(`Dashboard available at http://localhost:${dashboardPort}`);
+        log.info('Dashboard available', { url: `http://localhost:${dashboardPort}` });
       } catch (error) {
-        console.error('Failed to start dashboard:', error);
+        log.error('Failed to start dashboard', error instanceof Error ? error : { error: String(error) });
       }
     }
 
@@ -330,7 +332,7 @@ export class Orchestrator {
     this.scheduler.syncCapacity();
 
     this.running = true;
-    console.log('TrafficControl orchestrator is running');
+    log.info('TrafficControl orchestrator is running');
 
     // Start the main loop
     this.runLoop();
@@ -343,13 +345,13 @@ export class Orchestrator {
     if (this.dashboardServer) {
       try {
         await this.dashboardServer.stop();
-        console.log('Dashboard server stopped');
+        log.info('Dashboard server stopped');
       } catch (error) {
-        console.error('Error stopping dashboard:', error);
+        log.error('Error stopping dashboard', error instanceof Error ? error : { error: String(error) });
       }
     }
 
-    console.log('TrafficControl orchestrator stopped');
+    log.info('TrafficControl orchestrator stopped');
   }
 
   private async runLoop(): Promise<void> {
@@ -357,7 +359,7 @@ export class Orchestrator {
       try {
         await this.tick();
       } catch (err) {
-        console.error('Error in orchestrator loop:', err);
+        log.error('Error in orchestrator loop', err instanceof Error ? err : { error: String(err) });
       }
 
       // Wait before next tick
@@ -389,12 +391,10 @@ export class Orchestrator {
     for (const result of results) {
       if (result.status === 'scheduled' && result.tasks) {
         for (const scheduled of result.tasks) {
-          console.log(
-            `[Orchestrator] Scheduled task ${scheduled.taskId} with model ${scheduled.model} (session: ${scheduled.sessionId})`
-          );
+          log.info('Scheduled task', { taskId: scheduled.taskId, model: scheduled.model, sessionId: scheduled.sessionId });
         }
       } else if (result.status === 'error') {
-        console.error(`[Orchestrator] Scheduling error: ${result.error}`);
+        log.error('Scheduling error', { error: result.error });
       }
     }
   }
@@ -405,7 +405,7 @@ export class Orchestrator {
       throw new Error(`Project not found for task ${task.id}`);
     }
 
-    console.log(`[Orchestrator] Assigning task "${task.title}" to new ${model} agent`);
+    log.info('Assigning task to agent', { title: task.title, model });
 
     // Build minimal context for the task
     const systemPrompt = this.buildMinimalTaskContext(task, project);
@@ -437,7 +437,7 @@ export class Orchestrator {
       contextTokens,
     });
 
-    console.log(`[Orchestrator] Delegation recorded: task=${task.id}, session=${sessionId}, model=${model}, contextTokens=${contextTokens}`);
+    log.info('Delegation recorded', { taskId: task.id, sessionId, model, contextTokens });
 
     // Update task in database
     await this.taskRepo.assignAgent(task.id, sessionId);
@@ -498,8 +498,7 @@ export class Orchestrator {
       const usageByCategory = this.contextBudget.getUsageByCategory();
       const utilization = (budget.currentEstimate / budget.maxTokens * 100).toFixed(1);
 
-      console.warn(`[Orchestrator] Context budget warning: ${utilization}% utilized`);
-      console.warn(`[Orchestrator] Usage by category:`, usageByCategory);
+      log.warn('Context budget warning', { utilization, usageByCategory });
     }
 
     // Check if we've exceeded the target utilization
@@ -507,7 +506,7 @@ export class Orchestrator {
       const budget = this.contextBudget.getBudget();
       const utilization = (budget.currentEstimate / budget.maxTokens * 100).toFixed(1);
 
-      console.error(`[Orchestrator] Context budget exceeded: ${utilization}% utilized (target: ${budget.targetUtilization * 100}%)`);
+      log.error('Context budget exceeded', { utilization, targetPercent: budget.targetUtilization * 100 });
       this.compressContext();
     }
   }
@@ -520,11 +519,11 @@ export class Orchestrator {
     const compressibleEntries = this.contextBudget.getCompressibleEntries();
 
     if (compressibleEntries.length === 0) {
-      console.warn('[Orchestrator] No compressible context entries available');
+      log.warn('No compressible context entries available');
       return;
     }
 
-    console.log(`[Orchestrator] Compressing context: ${compressibleEntries.length} compressible entries`);
+    log.info('Compressing context', { compressibleEntries: compressibleEntries.length });
 
     let entriesProcessed = 0;
     let tokensSaved = 0;
@@ -533,7 +532,7 @@ export class Orchestrator {
     for (const entry of compressibleEntries) {
       // Check if we're back within budget
       if (this.contextBudget.isWithinBudget()) {
-        console.log(`[Orchestrator] Context now within budget after processing ${entriesProcessed} entries, saved ${tokensSaved} tokens`);
+        log.info('Context now within budget', { entriesProcessed, tokensSaved });
         break;
       }
 
@@ -546,7 +545,7 @@ export class Orchestrator {
         // Entry should be removed entirely
         this.contextBudget.removeEntry(entry.id);
         tokensSaved += originalTokens;
-        console.log(`  - Removed [${entry.category}] entry (ref: ${entry.referenceId || 'none'}), saved ${originalTokens} tokens`);
+        log.debug('Removed context entry', { category: entry.category, referenceId: entry.referenceId, tokensSaved: originalTokens });
       } else {
         // Update entry with summarized content
         this.contextBudget.updateEntry(entry.id, summary);
@@ -554,7 +553,7 @@ export class Orchestrator {
         const newTokens = newEntry?.tokens || 0;
         const saved = originalTokens - newTokens;
         tokensSaved += saved;
-        console.log(`  - Summarized [${entry.category}] entry (ref: ${entry.referenceId || 'none'}), saved ${saved} tokens`);
+        log.debug('Summarized context entry', { category: entry.category, referenceId: entry.referenceId, tokensSaved: saved });
       }
 
       entriesProcessed++;
@@ -562,7 +561,7 @@ export class Orchestrator {
 
     const budget = this.contextBudget.getBudget();
     const utilization = (budget.currentEstimate / budget.maxTokens * 100).toFixed(1);
-    console.log(`[Orchestrator] Compression complete: ${entriesProcessed} entries processed, ${tokensSaved} tokens saved, utilization now ${utilization}%`);
+    log.info('Compression complete', { entriesProcessed, tokensSaved, utilization });
   }
 
   /**
