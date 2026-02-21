@@ -97,9 +97,10 @@ describe('BacklogManager', () => {
     });
 
     it('should respect custom threshold', async () => {
-      // Set a very high threshold so backlog is always considered low
+      // Set threshold relative to current queue depth so it's always considered low
+      const currentQueued = await taskRepo.getQueued();
       const customManager = new BacklogManager(taskRepo, projectRepo, proposalRepo, {
-        threshold: 100
+        threshold: currentQueued.length + 100
       });
       const isLow = await customManager.isBacklogLow();
       expect(isLow).toBe(true);
