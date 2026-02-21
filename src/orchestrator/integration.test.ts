@@ -405,6 +405,11 @@ describe('Phase 5 Integration', () => {
     let mockSendFn: SendFunction;
 
     beforeEach(() => {
+      // Set a deterministic time outside quiet hours (noon) so flush()
+      // doesn't skip notifications. Without this, the test is flaky when
+      // run between midnight and 6 AM local time.
+      vi.setSystemTime(new Date('2024-01-15T12:00:00'));
+
       mockSendFn = vi.fn<SendFunction>().mockResolvedValue('1234567890.123456');
 
       const notificationConfig: NotificationConfig = {
