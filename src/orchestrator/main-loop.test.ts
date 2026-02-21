@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'node:fs/promises';
 import { MainLoop, OrchestrationConfig, OrchestrationDependencies } from './main-loop.js';
 import { StateManager } from './state-manager.js';
 import { EventDispatcher, AgentEvent } from './event-dispatcher.js';
@@ -170,10 +171,17 @@ describe('MainLoop', () => {
   let deps: OrchestrationDependencies;
 
   let getClientSpy: ReturnType<typeof vi.spyOn>;
+  let origSlackChannel: string | undefined;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+
+    // Save env vars before each test to guarantee cleanup
+    origSlackChannel = process.env.TC_SLACK_CHANNEL;
+
+    // Clean up stale state file to prevent cross-test contamination
+    await fs.rm('/tmp/test-state.json', { force: true }).catch(() => {});
 
     // Prevent BudgetTracker auto-instantiation from hitting the real Supabase client in tests.
     // Tests that need a BudgetTracker pass one explicitly via deps.
@@ -193,6 +201,13 @@ describe('MainLoop', () => {
     }
     vi.useRealTimers();
     getClientSpy.mockRestore();
+
+    // Restore env vars regardless of test outcome
+    if (origSlackChannel !== undefined) {
+      process.env.TC_SLACK_CHANNEL = origSlackChannel;
+    } else {
+      delete process.env.TC_SLACK_CHANNEL;
+    }
   });
 
   describe('constructor', () => {
@@ -1142,7 +1157,6 @@ describe('MainLoop', () => {
       loop.setSlackIntegration(mockSlack);
 
       // Set TC_SLACK_CHANNEL so Slack notification fires
-      const origChannel = process.env.TC_SLACK_CHANNEL;
       process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
 
       await loop.start();
@@ -1161,7 +1175,7 @@ describe('MainLoop', () => {
       // budgetPaused should be true
       expect(loop.getStats().safety.budgetPaused).toBe(true);
 
-      process.env.TC_SLACK_CHANNEL = origChannel;
+
       await loop.stop();
     });
 
@@ -1179,7 +1193,6 @@ describe('MainLoop', () => {
       const loop = new MainLoop(config, depsWithBudget);
       loop.setSlackIntegration(mockSlack);
 
-      const origChannel = process.env.TC_SLACK_CHANNEL;
       process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
 
       await loop.start();
@@ -1194,7 +1207,7 @@ describe('MainLoop', () => {
       );
       expect(budgetExceededCalls).toHaveLength(1);
 
-      process.env.TC_SLACK_CHANNEL = origChannel;
+
       await loop.stop();
     });
 
@@ -1219,7 +1232,6 @@ describe('MainLoop', () => {
       const loop = new MainLoop(config, depsWithBudget);
       loop.setSlackIntegration(mockSlack);
 
-      const origChannel = process.env.TC_SLACK_CHANNEL;
       process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
 
       await loop.start();
@@ -1245,7 +1257,7 @@ describe('MainLoop', () => {
       await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
       expect(depsWithBudget.scheduler.scheduleNext).toHaveBeenCalled();
 
-      process.env.TC_SLACK_CHANNEL = origChannel;
+
       await loop.stop();
     });
 
@@ -1271,6 +1283,1039 @@ describe('MainLoop', () => {
       const depsWithBudget = { ...createMockDependencies(), budgetTracker: mockBudgetTracker as any };
       const loop = new MainLoop(config, depsWithBudget);
       expect(loop.getBudgetTracker()).toBe(mockBudgetTracker);
+    });
+  });
+
+  describe('tick - degraded mode transitions', () => {
+    it('should skip work when in degraded mode and recovery fails', async () => {
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+
+      await mainLoop.start();
+
+      // Put the health monitor into degraded mode
+      const healthMonitor = mainLoop.getDatabaseHealthMonitor();
+      vi.spyOn(healthMonitor, 'isDegraded').mockReturnValue(true);
+      vi.spyOn(healthMonitor, 'attemptDbRecovery').mockResolvedValue(undefined);
+
+      vi.mocked(deps.scheduler.scheduleNext).mockClear();
+
+      // Advance timer to trigger tick
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      // Scheduler should NOT have been called since degraded mode persists
+      expect(deps.scheduler.scheduleNext).not.toHaveBeenCalled();
+      expect(healthMonitor.attemptDbRecovery).toHaveBeenCalled();
+    });
+
+    it('should resume work after successful recovery from degraded mode', async () => {
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+
+      await mainLoop.start();
+
+      const healthMonitor = mainLoop.getDatabaseHealthMonitor();
+      // First call: degraded, second call (after recovery): not degraded
+      vi.spyOn(healthMonitor, 'isDegraded')
+        .mockReturnValueOnce(true)   // initial check
+        .mockReturnValueOnce(false); // after recovery attempt
+      vi.spyOn(healthMonitor, 'attemptDbRecovery').mockResolvedValue(undefined);
+      vi.spyOn(healthMonitor, 'getStats').mockReturnValue({
+        healthy: true,
+        consecutiveFailures: 0,
+      });
+      vi.spyOn(healthMonitor, 'onDbSuccess').mockImplementation(() => {});
+
+      vi.mocked(deps.scheduler.scheduleNext).mockClear();
+
+      // Advance timer to trigger tick
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      // Scheduler SHOULD have been called since recovery succeeded
+      expect(healthMonitor.attemptDbRecovery).toHaveBeenCalled();
+      expect(deps.scheduler.canSchedule).toHaveBeenCalled();
+    });
+  });
+
+  describe('tick - circuit breaker integration', () => {
+    it('should skip tick when circuit breaker prevents operation', async () => {
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+
+      await mainLoop.start();
+
+      // Trip the circuit breaker
+      const circuitBreaker = mainLoop.getCircuitBreaker();
+      vi.spyOn(circuitBreaker, 'allowsOperation').mockReturnValue(false);
+
+      vi.mocked(deps.scheduler.scheduleNext).mockClear();
+      vi.mocked(deps.scheduler.canSchedule).mockClear();
+
+      // Advance timer to trigger tick
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      // Nothing should happen since circuit breaker is open
+      expect(deps.scheduler.canSchedule).not.toHaveBeenCalled();
+      expect(deps.scheduler.scheduleNext).not.toHaveBeenCalled();
+    });
+
+    it('should proceed with tick when circuit breaker allows operation', async () => {
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+
+      await mainLoop.start();
+
+      const circuitBreaker = mainLoop.getCircuitBreaker();
+      vi.spyOn(circuitBreaker, 'allowsOperation').mockReturnValue(true);
+
+      vi.mocked(deps.scheduler.scheduleNext).mockClear();
+
+      // Advance timer to trigger tick
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      // Scheduler should be checked/called
+      expect(deps.scheduler.canSchedule).toHaveBeenCalled();
+    });
+  });
+
+  describe('tick - spend monitor stop', () => {
+    it('should pause loop when spend monitor triggers stop', async () => {
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+
+      await mainLoop.start();
+
+      const spendMonitor = mainLoop.getSpendMonitor();
+      vi.spyOn(spendMonitor, 'shouldStop').mockReturnValue(true);
+
+      // Advance timer to trigger tick
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      expect(mainLoop.isPaused()).toBe(true);
+    });
+
+    it('should notify Slack when spend monitor triggers stop', async () => {
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+
+      await mainLoop.start();
+      mainLoop.setSlackIntegration(mockSlack);
+
+      const spendMonitor = mainLoop.getSpendMonitor();
+      vi.spyOn(spendMonitor, 'shouldStop').mockReturnValue(true);
+      vi.spyOn(spendMonitor, 'formatForSlack').mockReturnValue('Budget info');
+
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      // Clear any startup notifications
+      mockSlack.sendMessage.mockClear();
+
+      // Advance timer to trigger tick
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+      await Promise.resolve();
+
+      expect(mockSlack.sendMessage).toHaveBeenCalledWith(
+        'C_TEST_CHANNEL',
+        expect.stringContaining('Budget Limit Reached')
+      );
+
+
+    });
+  });
+
+  describe('tick - error handling', () => {
+    it('should handle database errors by routing to health monitor', async () => {
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+      vi.mocked(deps.scheduler.scheduleNext).mockRejectedValue(new Error('Database connection refused'));
+
+      await mainLoop.start();
+
+      const healthMonitor = mainLoop.getDatabaseHealthMonitor();
+      vi.spyOn(healthMonitor, 'isDbError').mockReturnValue(true);
+      vi.spyOn(healthMonitor, 'onDbFailure').mockImplementation(() => {});
+
+      // Advance timer to trigger tick
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      expect(healthMonitor.isDbError).toHaveBeenCalled();
+      expect(healthMonitor.onDbFailure).toHaveBeenCalled();
+    });
+
+    it('should log non-DB errors without triggering degraded mode', async () => {
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+      vi.mocked(deps.scheduler.scheduleNext).mockRejectedValue(new Error('Some random error'));
+
+      await mainLoop.start();
+
+      const healthMonitor = mainLoop.getDatabaseHealthMonitor();
+      vi.spyOn(healthMonitor, 'isDbError').mockReturnValue(false);
+      vi.spyOn(healthMonitor, 'onDbFailure').mockImplementation(() => {});
+
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      // Advance timer to trigger tick
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      expect(healthMonitor.isDbError).toHaveBeenCalled();
+      expect(healthMonitor.onDbFailure).not.toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should not crash the loop when tick throws', async () => {
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+      // First tick fails, second tick succeeds
+      vi.mocked(deps.scheduler.scheduleNext)
+        .mockRejectedValueOnce(new Error('Transient error'))
+        .mockResolvedValue({ status: 'idle', scheduled: 0 });
+
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await mainLoop.start();
+
+      const healthMonitor = mainLoop.getDatabaseHealthMonitor();
+      vi.spyOn(healthMonitor, 'isDbError').mockReturnValue(false);
+
+      // Advance timer for first tick (error)
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      // Loop should still be running
+      expect(mainLoop.isRunning()).toBe(true);
+      expect(mainLoop.isPaused()).toBe(false);
+
+      // Advance timer for second tick (success)
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      // Loop should still be running after recovery
+      expect(mainLoop.isRunning()).toBe(true);
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should reset DB failure counter on successful tick', async () => {
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+
+      await mainLoop.start();
+
+      const healthMonitor = mainLoop.getDatabaseHealthMonitor();
+      // Simulate health monitor having previous failures
+      vi.spyOn(healthMonitor, 'getStats').mockReturnValue({
+        healthy: true,
+        consecutiveFailures: 2,
+      });
+      vi.spyOn(healthMonitor, 'onDbSuccess').mockImplementation(() => {});
+
+      // Advance timer to trigger tick
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      expect(healthMonitor.onDbSuccess).toHaveBeenCalled();
+    });
+  });
+
+  describe('tick - task scheduling with state tracking', () => {
+    it('should add scheduled tasks to state manager', async () => {
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+      vi.mocked(deps.scheduler.scheduleNext).mockResolvedValue({
+        status: 'scheduled',
+        scheduled: 1,
+        tasks: [{
+          taskId: 'task-abc',
+          model: 'opus',
+          sessionId: 'session-abc',
+        }],
+      });
+
+      vi.mocked(deps.agentManager.getSession).mockReturnValue({
+        id: 'session-abc',
+        taskId: 'task-abc',
+        model: 'opus',
+        status: 'running',
+        startedAt: new Date(),
+        tokensUsed: 0,
+      });
+
+      await mainLoop.start();
+
+      // Advance timer to trigger tick
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      const state = mainLoop.getState();
+      expect(state.activeAgents.has('session-abc')).toBe(true);
+    });
+
+    it('should handle scheduled task when agent session not found', async () => {
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+      vi.mocked(deps.scheduler.scheduleNext).mockResolvedValue({
+        status: 'scheduled',
+        scheduled: 1,
+        tasks: [{
+          taskId: 'task-def',
+          model: 'sonnet',
+          sessionId: 'session-def',
+        }],
+      });
+
+      // getSession returns undefined - agent not found
+      vi.mocked(deps.agentManager.getSession).mockReturnValue(undefined);
+
+      await mainLoop.start();
+
+      // Should not throw
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      // Agent should NOT be in state since session wasn't found
+      const state = mainLoop.getState();
+      expect(state.activeAgents.has('session-def')).toBe(false);
+    });
+
+    it('should track multiple scheduled tasks from a single tick', async () => {
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+      vi.mocked(deps.scheduler.scheduleNext).mockResolvedValue({
+        status: 'scheduled',
+        scheduled: 2,
+        tasks: [
+          { taskId: 'task-1', model: 'opus', sessionId: 'session-1' },
+          { taskId: 'task-2', model: 'sonnet', sessionId: 'session-2' },
+        ],
+      });
+
+      vi.mocked(deps.agentManager.getSession)
+        .mockReturnValueOnce({
+          id: 'session-1', taskId: 'task-1', model: 'opus',
+          status: 'running', startedAt: new Date(), tokensUsed: 0,
+        })
+        .mockReturnValueOnce({
+          id: 'session-2', taskId: 'task-2', model: 'sonnet',
+          status: 'running', startedAt: new Date(), tokensUsed: 0,
+        });
+
+      await mainLoop.start();
+
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      const state = mainLoop.getState();
+      expect(state.activeAgents.has('session-1')).toBe(true);
+      expect(state.activeAgents.has('session-2')).toBe(true);
+    });
+  });
+
+  describe('subagent spawn handling', () => {
+    it('should add subagent to state on subagent_spawn event', async () => {
+      await mainLoop.handleAgentEvent({
+        type: 'subagent_spawn',
+        agentId: 'parent-1',
+        taskId: 'task-1',
+        payload: {
+          sessionId: 'sub-session-1',
+          model: 'sonnet',
+        },
+        timestamp: new Date(),
+      });
+
+      const state = mainLoop.getState();
+      expect(state.activeAgents.has('sub-session-1')).toBe(true);
+      const agent = state.activeAgents.get('sub-session-1');
+      expect(agent?.model).toBe('sonnet');
+      expect(agent?.taskId).toBe('task-1');
+    });
+
+    it('should not add subagent when payload is incomplete', async () => {
+      await mainLoop.handleAgentEvent({
+        type: 'subagent_spawn',
+        agentId: 'parent-1',
+        taskId: 'task-1',
+        payload: {}, // missing sessionId and model
+        timestamp: new Date(),
+      });
+
+      const state = mainLoop.getState();
+      // No new agent should be added
+      expect(state.activeAgents.size).toBe(0);
+    });
+  });
+
+  describe('agent question handling', () => {
+    it('should set agent status to blocked on question event', async () => {
+      const stateManager = mainLoop.getStateManager();
+      stateManager.addAgent({
+        sessionId: 'session-q1',
+        taskId: 'task-q1',
+        model: 'opus',
+        status: 'running',
+        startedAt: new Date(),
+      });
+
+      await mainLoop.handleAgentEvent({
+        type: 'question',
+        agentId: 'session-q1',
+        taskId: 'task-q1',
+        payload: { question: 'What should I do?' },
+        timestamp: new Date(),
+      });
+
+      const agent = stateManager.getState().activeAgents.get('session-q1');
+      expect(agent?.status).toBe('blocked');
+    });
+
+    it('should handle question for non-existent agent gracefully', async () => {
+      // Should not throw even if agent doesn't exist
+      await expect(
+        mainLoop.handleAgentEvent({
+          type: 'question',
+          agentId: 'non-existent',
+          taskId: 'task-1',
+          payload: { question: 'Hello?' },
+          timestamp: new Date(),
+        })
+      ).resolves.not.toThrow();
+    });
+  });
+
+  describe('safety system getters', () => {
+    it('should return circuit breaker instance', () => {
+      expect(mainLoop.getCircuitBreaker()).toBeDefined();
+    });
+
+    it('should return spend monitor instance', () => {
+      expect(mainLoop.getSpendMonitor()).toBeDefined();
+    });
+
+    it('should return productivity monitor instance', () => {
+      expect(mainLoop.getProductivityMonitor()).toBeDefined();
+    });
+
+    it('should return task approval manager instance', () => {
+      expect(mainLoop.getTaskApprovalManager()).toBeDefined();
+    });
+
+    it('should return database health monitor instance', () => {
+      expect(mainLoop.getDatabaseHealthMonitor()).toBeDefined();
+    });
+
+    it('should return null for pre-flight checker before start', () => {
+      expect(mainLoop.getPreFlightChecker()).toBeNull();
+    });
+
+    it('should return null for last pre-flight result before start', () => {
+      expect(mainLoop.getLastPreFlightResult()).toBeNull();
+    });
+  });
+
+  describe('circuit breaker manual reset', () => {
+    it('should reset circuit breaker and consecutive failures', () => {
+      const circuitBreaker = mainLoop.getCircuitBreaker();
+      const resetSpy = vi.spyOn(circuitBreaker, 'reset');
+
+      mainLoop.resetCircuitBreaker();
+
+      expect(resetSpy).toHaveBeenCalledWith(true);
+    });
+  });
+
+  describe('task approval response handling', () => {
+    it('should forward approval response to task approval manager', () => {
+      const approvalManager = mainLoop.getTaskApprovalManager();
+      const handleSpy = vi.spyOn(approvalManager, 'handleResponse');
+
+      mainLoop.handleTaskApprovalResponse('task-1', true, 'user-1', 'looks good');
+
+      expect(handleSpy).toHaveBeenCalledWith('task-1', true, 'user-1', 'looks good');
+    });
+  });
+
+  describe('Slack integration', () => {
+    it('should send startup notification to Slack when integration is set', async () => {
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+
+      mainLoop.setSlackIntegration(mockSlack);
+
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      await mainLoop.start();
+
+      expect(mockSlack.sendMessage).toHaveBeenCalledWith(
+        'C_TEST_CHANNEL',
+        expect.stringContaining('TrafficControl Started')
+      );
+
+
+    });
+
+    it('should send shutdown notification to Slack when integration is set', async () => {
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+
+      mainLoop.setSlackIntegration(mockSlack);
+
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      await mainLoop.start();
+      mockSlack.sendMessage.mockClear();
+      await mainLoop.stop();
+
+      expect(mockSlack.sendMessage).toHaveBeenCalledWith(
+        'C_TEST_CHANNEL',
+        expect.stringContaining('TrafficControl Stopped')
+      );
+
+
+    });
+
+    it('should include final summary in shutdown notification', async () => {
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+
+      mainLoop.setSlackIntegration(mockSlack);
+
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      await mainLoop.start();
+      mockSlack.sendMessage.mockClear();
+      await mainLoop.stop();
+
+      const shutdownCall = mockSlack.sendMessage.mock.calls.find(
+        call => typeof call[1] === 'string' && call[1].includes('TrafficControl Stopped')
+      );
+      expect(shutdownCall).toBeDefined();
+      expect(shutdownCall![1]).toContain('Final Summary');
+
+
+    });
+  });
+
+  describe('formatStatusForSlack', () => {
+    it('should include circuit breaker tripped warning in status', async () => {
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+
+      mainLoop.setSlackIntegration(mockSlack);
+
+      // Trip the circuit breaker
+      const cb = mainLoop.getCircuitBreaker();
+      for (let i = 0; i < config.circuitBreakerFailureThreshold; i++) {
+        cb.recordFailure(`error-${i}`);
+      }
+
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      await mainLoop.start();
+
+      const startupCall = mockSlack.sendMessage.mock.calls.find(
+        call => typeof call[1] === 'string' && call[1].includes('TrafficControl Started')
+      );
+      expect(startupCall![1]).toContain('Circuit breaker is tripped');
+
+
+    });
+
+    it('should include degraded mode warning in status', async () => {
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+
+      mainLoop.setSlackIntegration(mockSlack);
+
+      // Put health monitor into degraded mode
+      const healthMonitor = mainLoop.getDatabaseHealthMonitor();
+      vi.spyOn(healthMonitor, 'isDegraded').mockReturnValue(true);
+
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      await mainLoop.start();
+
+      const startupCall = mockSlack.sendMessage.mock.calls.find(
+        call => typeof call[1] === 'string' && call[1].includes('TrafficControl Started')
+      );
+      expect(startupCall![1]).toContain('Database degraded');
+
+
+    });
+
+    it('should include over budget warning in status', async () => {
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+
+      mainLoop.setSlackIntegration(mockSlack);
+
+      // Put spend monitor over budget
+      const spendMonitor = mainLoop.getSpendMonitor();
+      vi.spyOn(spendMonitor, 'getStats').mockReturnValue({
+        dailySpend: 200,
+        weeklySpend: 600,
+        dailyBudgetUsed: 200,
+        weeklyBudgetUsed: 120,
+        isOverBudget: true,
+        totalSpend: 200,
+        byModel: {
+          opus: { spend: 150, sessions: 3 },
+          sonnet: { spend: 50, sessions: 2 },
+          haiku: { spend: 0, sessions: 0 },
+        },
+        lastUpdated: new Date(),
+      });
+
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      await mainLoop.start();
+
+      const startupCall = mockSlack.sendMessage.mock.calls.find(
+        call => typeof call[1] === 'string' && call[1].includes('TrafficControl Started')
+      );
+      expect(startupCall![1]).toContain('Over budget');
+
+
+    });
+  });
+
+  describe('status check-in', () => {
+    it('should start status check-in when interval is configured', async () => {
+      const loopWithCheckIn = new MainLoop(
+        { ...config, statusCheckInIntervalMs: 500 },
+        deps
+      );
+
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+      loopWithCheckIn.setSlackIntegration(mockSlack);
+
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      await loopWithCheckIn.start();
+      mockSlack.sendMessage.mockClear();
+
+      // Advance timer past the status check-in interval
+      await vi.advanceTimersByTimeAsync(500);
+
+      const checkInCalls = mockSlack.sendMessage.mock.calls.filter(
+        call => typeof call[1] === 'string' && call[1].includes('Status Check-In')
+      );
+      expect(checkInCalls.length).toBeGreaterThanOrEqual(1);
+
+
+      await loopWithCheckIn.stop();
+    });
+
+    it('should not send status check-in when no Slack integration', async () => {
+      const loopWithCheckIn = new MainLoop(
+        { ...config, statusCheckInIntervalMs: 200 },
+        deps
+      );
+
+      await loopWithCheckIn.start();
+
+      // Advance past check-in interval - should not throw
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect(loopWithCheckIn.isRunning()).toBe(true);
+
+      await loopWithCheckIn.stop();
+    });
+
+    it('should not send status check-in when no channel configured', async () => {
+      const loopWithCheckIn = new MainLoop(
+        { ...config, statusCheckInIntervalMs: 200 },
+        deps
+      );
+
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+      loopWithCheckIn.setSlackIntegration(mockSlack);
+
+      delete process.env.TC_SLACK_CHANNEL;
+
+      await loopWithCheckIn.start();
+      mockSlack.sendMessage.mockClear();
+
+      await vi.advanceTimersByTimeAsync(200);
+
+      const checkInCalls = mockSlack.sendMessage.mock.calls.filter(
+        call => typeof call[1] === 'string' && call[1].includes('Status Check-In')
+      );
+      expect(checkInCalls).toHaveLength(0);
+
+
+      await loopWithCheckIn.stop();
+    });
+  });
+
+  describe('approval-aware scheduling', () => {
+    it('should use approval callback when enableTaskApproval is true', async () => {
+      const loopWithApproval = new MainLoop(
+        { ...config, enableTaskApproval: true },
+        deps
+      );
+
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+
+      await loopWithApproval.start();
+
+      vi.mocked(deps.scheduler.scheduleNext).mockClear();
+
+      // Advance timer to trigger tick
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      // scheduleNext should have been called with a filter function
+      expect(deps.scheduler.scheduleNext).toHaveBeenCalledWith(
+        undefined,
+        expect.any(Function)
+      );
+
+      await loopWithApproval.stop();
+    });
+
+    it('should not pass approval callback when enableTaskApproval is false', async () => {
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+
+      await mainLoop.start();
+
+      vi.mocked(deps.scheduler.scheduleNext).mockClear();
+
+      // Advance timer to trigger tick
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      // scheduleNext should be called without a filter
+      expect(deps.scheduler.scheduleNext).toHaveBeenCalledWith(
+        undefined,
+        undefined
+      );
+    });
+  });
+
+  describe('global event handlers', () => {
+    it('should call global event handlers and allow unsubscribe', async () => {
+      const handler = vi.fn();
+      const unsubscribe = mainLoop.onEvent(handler);
+
+      const event: AgentEvent = {
+        type: 'question',
+        agentId: 'agent-1',
+        taskId: 'task-1',
+        payload: { question: 'What?' },
+        timestamp: new Date(),
+      };
+
+      await mainLoop.handleAgentEvent(event);
+      expect(handler).toHaveBeenCalledWith(event);
+
+      handler.mockClear();
+      unsubscribe();
+
+      await mainLoop.handleAgentEvent(event);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('should continue dispatching when a global handler throws', async () => {
+      const errorHandler = vi.fn().mockRejectedValue(new Error('handler error'));
+      const goodHandler = vi.fn();
+
+      mainLoop.onEvent(errorHandler);
+      mainLoop.onEvent(goodHandler);
+
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const event: AgentEvent = {
+        type: 'question',
+        agentId: 'agent-1',
+        taskId: 'task-1',
+        payload: {},
+        timestamp: new Date(),
+      };
+
+      await mainLoop.handleAgentEvent(event);
+
+      // Both handlers should have been called
+      expect(errorHandler).toHaveBeenCalled();
+      expect(goodHandler).toHaveBeenCalled();
+
+      consoleSpy.mockRestore();
+    });
+  });
+
+  describe('safety callbacks', () => {
+    it('should notify Slack when circuit breaker opens', async () => {
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+
+      mainLoop.setSlackIntegration(mockSlack);
+
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      // Trip the circuit breaker
+      const cb = mainLoop.getCircuitBreaker();
+      for (let i = 0; i < config.circuitBreakerFailureThreshold; i++) {
+        cb.recordFailure(`error-${i}`);
+      }
+
+      // Flush async
+      await Promise.resolve();
+
+      const cbCalls = mockSlack.sendMessage.mock.calls.filter(
+        call => typeof call[1] === 'string' && call[1].includes('Circuit Breaker TRIPPED')
+      );
+      expect(cbCalls.length).toBeGreaterThanOrEqual(1);
+
+
+    });
+
+    it('should send spend alert to Slack when spend threshold crossed', async () => {
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+
+      mainLoop.setSlackIntegration(mockSlack);
+
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      // Record enough spend to trigger alert (>80% of daily budget)
+      const sm = mainLoop.getSpendMonitor();
+      // Record cost close to daily budget to trigger alert
+      for (let i = 0; i < 10; i++) {
+        sm.recordAgentCost(`agent-${i}`, `task-${i}`, 'opus', 1000, 2000, 9);
+      }
+
+      await Promise.resolve();
+
+      const alertCalls = mockSlack.sendMessage.mock.calls.filter(
+        call => typeof call[1] === 'string' && call[1].includes('Budget Alert')
+      );
+      expect(alertCalls.length).toBeGreaterThanOrEqual(1);
+
+
+    });
+
+    it('should send productivity alert to Slack on consecutive failures', async () => {
+      const mockSlack = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+        sendApprovalRequest: vi.fn().mockResolvedValue(undefined),
+      };
+
+      mainLoop.setSlackIntegration(mockSlack);
+
+      process.env.TC_SLACK_CHANNEL = 'C_TEST_CHANNEL';
+
+      // Record consecutive failures to trigger productivity alert
+      const pm = mainLoop.getProductivityMonitor();
+      for (let i = 0; i < 5; i++) {
+        pm.recordAgentCompletion(
+          `agent-${i}`, `task-${i}`, 'opus',
+          false, 10000, 1000, 3.0,
+          undefined, `Error ${i}`
+        );
+      }
+
+      await Promise.resolve();
+
+      const alertCalls = mockSlack.sendMessage.mock.calls.filter(
+        call => typeof call[1] === 'string' && call[1].includes('Productivity Alert')
+      );
+      expect(alertCalls.length).toBeGreaterThanOrEqual(1);
+
+
+    });
+  });
+
+  describe('approval-aware scheduling callback', () => {
+    it('should skip unapproved tasks that require approval', async () => {
+      const loopWithApproval = new MainLoop(
+        { ...config, enableTaskApproval: true },
+        deps
+      );
+
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+
+      // Capture the filter function passed to scheduleNext
+      let capturedFilter: ((task: any) => Promise<boolean>) | undefined;
+      vi.mocked(deps.scheduler.scheduleNext).mockImplementation(async (_project, filter) => {
+        capturedFilter = filter as any;
+        return { status: 'idle', scheduled: 0 };
+      });
+
+      await loopWithApproval.start();
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      expect(capturedFilter).toBeDefined();
+
+      // Test with a task that requires approval and is not approved
+      const approvalManager = loopWithApproval.getTaskApprovalManager();
+      vi.spyOn(approvalManager, 'requiresApproval').mockReturnValue(true);
+      vi.spyOn(approvalManager, 'isApproved').mockReturnValue(false);
+      vi.spyOn(approvalManager, 'getPendingApproval').mockReturnValue(undefined);
+      vi.spyOn(approvalManager, 'requestApproval').mockResolvedValue({
+        taskId: 'task-x',
+        requestedAt: new Date(),
+        status: 'pending',
+      } as any);
+
+      const result = await capturedFilter!({
+        id: 'task-x',
+        title: 'Test Task',
+        priority_confirmed: false,
+      });
+
+      expect(result).toBe(false);
+      expect(approvalManager.requestApproval).toHaveBeenCalled();
+
+      await loopWithApproval.stop();
+    });
+
+    it('should allow approved tasks through the filter', async () => {
+      const loopWithApproval = new MainLoop(
+        { ...config, enableTaskApproval: true },
+        deps
+      );
+
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+
+      let capturedFilter: ((task: any) => Promise<boolean>) | undefined;
+      vi.mocked(deps.scheduler.scheduleNext).mockImplementation(async (_project, filter) => {
+        capturedFilter = filter as any;
+        return { status: 'idle', scheduled: 0 };
+      });
+
+      await loopWithApproval.start();
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      const approvalManager = loopWithApproval.getTaskApprovalManager();
+      vi.spyOn(approvalManager, 'requiresApproval').mockReturnValue(true);
+      vi.spyOn(approvalManager, 'isApproved').mockReturnValue(true);
+
+      const result = await capturedFilter!({
+        id: 'task-approved',
+        title: 'Approved Task',
+      });
+
+      expect(result).toBe(true);
+
+      await loopWithApproval.stop();
+    });
+
+    it('should skip tasks with pending approvals without requesting again', async () => {
+      const loopWithApproval = new MainLoop(
+        { ...config, enableTaskApproval: true },
+        deps
+      );
+
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+
+      let capturedFilter: ((task: any) => Promise<boolean>) | undefined;
+      vi.mocked(deps.scheduler.scheduleNext).mockImplementation(async (_project, filter) => {
+        capturedFilter = filter as any;
+        return { status: 'idle', scheduled: 0 };
+      });
+
+      await loopWithApproval.start();
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      const approvalManager = loopWithApproval.getTaskApprovalManager();
+      vi.spyOn(approvalManager, 'requiresApproval').mockReturnValue(true);
+      vi.spyOn(approvalManager, 'isApproved').mockReturnValue(false);
+      vi.spyOn(approvalManager, 'getPendingApproval').mockReturnValue({
+        taskId: 'task-pending',
+        requestedAt: new Date(),
+        status: 'pending',
+      } as any);
+      vi.spyOn(approvalManager, 'requestApproval');
+
+      const result = await capturedFilter!({
+        id: 'task-pending',
+        title: 'Pending Task',
+      });
+
+      expect(result).toBe(false);
+      expect(approvalManager.requestApproval).not.toHaveBeenCalled();
+
+      await loopWithApproval.stop();
+    });
+
+    it('should allow tasks that do not require approval', async () => {
+      const loopWithApproval = new MainLoop(
+        { ...config, enableTaskApproval: true },
+        deps
+      );
+
+      vi.mocked(deps.scheduler.canSchedule).mockReturnValue(true);
+
+      let capturedFilter: ((task: any) => Promise<boolean>) | undefined;
+      vi.mocked(deps.scheduler.scheduleNext).mockImplementation(async (_project, filter) => {
+        capturedFilter = filter as any;
+        return { status: 'idle', scheduled: 0 };
+      });
+
+      await loopWithApproval.start();
+      await vi.advanceTimersByTimeAsync(config.pollIntervalMs);
+
+      const approvalManager = loopWithApproval.getTaskApprovalManager();
+      vi.spyOn(approvalManager, 'requiresApproval').mockReturnValue(false);
+
+      const result = await capturedFilter!({
+        id: 'task-nonapproval',
+        title: 'Auto-approved Task',
+      });
+
+      expect(result).toBe(true);
+
+      await loopWithApproval.stop();
+    });
+  });
+
+  describe('agent manager event routing', () => {
+    it('should route agent manager events through handleAgentManagerEvent', async () => {
+      // Capture the callbacks registered via agentManager.onEvent
+      const capturedCallbacks: Record<string, Function> = {};
+      vi.mocked(deps.agentManager.onEvent).mockImplementation((eventType: string, callback: Function) => {
+        capturedCallbacks[eventType] = callback;
+      });
+
+      // Re-create mainLoop so onEvent captures the callbacks
+      const freshLoop = new MainLoop(config, deps);
+
+      // Set up an agent in state for the completion to find
+      freshLoop.getStateManager().addAgent({
+        sessionId: 'session-routed',
+        taskId: 'task-routed',
+        model: 'opus',
+        status: 'running',
+        startedAt: new Date(),
+      });
+
+      // Mock getSession to return session info
+      vi.mocked(deps.agentManager.getSession).mockReturnValue({
+        id: 'session-routed',
+        taskId: 'task-routed',
+        model: 'opus',
+        status: 'running',
+        startedAt: new Date(),
+        tokensUsed: 0,
+      });
+
+      // Trigger the completion callback
+      expect(capturedCallbacks['completion']).toBeDefined();
+      await capturedCallbacks['completion']({
+        sessionId: 'session-routed',
+        data: { summary: 'Routed completion' },
+        timestamp: new Date(),
+      });
+
+      // Agent should have been removed from state (completion processed)
+      expect(freshLoop.getStateManager().getState().activeAgents.has('session-routed')).toBe(false);
     });
   });
 });
