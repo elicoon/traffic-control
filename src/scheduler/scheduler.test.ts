@@ -222,6 +222,194 @@ describe('Scheduler', () => {
 
       expect(mockTaskQueue.remove).toHaveBeenCalledWith('task-1');
     });
+
+    it('should return error when spawn fails with Error', async () => {
+      const task = createQueuedTask({ id: 'task-fail', estimated_sessions_sonnet: 1 });
+
+      vi.mocked(mockTaskQueue.isEmpty).mockReturnValue(false);
+      vi.mocked(mockCapacityTracker.hasCapacity).mockReturnValue(true);
+      vi.mocked(mockTaskQueue.getNextForModel).mockReturnValue(task);
+
+      const spawnCallback = vi.fn().mockRejectedValue(new Error('agent crash'));
+
+      const result = await scheduler.scheduleNext(spawnCallback);
+
+      expect(result.status).toBe('error');
+      expect(result.scheduled).toBe(0);
+      expect(result.error).toBe('agent crash');
+    });
+
+    it('should return error with string message for non-Error throws', async () => {
+      const task = createQueuedTask({ id: 'task-fail-str', estimated_sessions_sonnet: 1 });
+
+      vi.mocked(mockTaskQueue.isEmpty).mockReturnValue(false);
+      vi.mocked(mockCapacityTracker.hasCapacity).mockReturnValue(true);
+      vi.mocked(mockTaskQueue.getNextForModel).mockReturnValue(task);
+
+      const spawnCallback = vi.fn().mockRejectedValue('string error');
+
+      const result = await scheduler.scheduleNext(spawnCallback);
+
+      expect(result.status).toBe('error');
+      expect(result.error).toBe('string error');
+    });
+
+    it('should return idle when task filter rejects the task', async () => {
+      const task = createQueuedTask({ id: 'task-filtered', estimated_sessions_sonnet: 1 });
+
+      vi.mocked(mockTaskQueue.isEmpty).mockReturnValue(false);
+      vi.mocked(mockCapacityTracker.hasCapacity).mockReturnValue(true);
+      vi.mocked(mockTaskQueue.getNextForModel).mockReturnValue(task);
+
+      const taskFilter = vi.fn().mockResolvedValue(false);
+
+      const result = await scheduler.scheduleNext(undefined, taskFilter);
+
+      expect(result.status).toBe('idle');
+      expect(result.scheduled).toBe(0);
+      expect(taskFilter).toHaveBeenCalledWith(task.task);
+    });
+
+    it('should return idle when task filter throws an error', async () => {
+      const task = createQueuedTask({ id: 'task-filter-err', estimated_sessions_sonnet: 1 });
+
+      vi.mocked(mockTaskQueue.isEmpty).mockReturnValue(false);
+      vi.mocked(mockCapacityTracker.hasCapacity).mockReturnValue(true);
+      vi.mocked(mockTaskQueue.getNextForModel).mockReturnValue(task);
+
+      const taskFilter = vi.fn().mockRejectedValue(new Error('filter broke'));
+
+      const result = await scheduler.scheduleNext(undefined, taskFilter);
+
+      expect(result.status).toBe('idle');
+      expect(result.scheduled).toBe(0);
+    });
+
+    it('should fallback to sonnet when opus capacity exhausted after task selection', async () => {
+      const task = createQueuedTask({
+        id: 'task-fallback',
+        estimated_sessions_opus: 1,
+        estimated_sessions_sonnet: 0,
+      });
+
+      let hasCapacityCalls = 0;
+      vi.mocked(mockTaskQueue.isEmpty).mockReturnValue(false);
+      vi.mocked(mockCapacityTracker.hasCapacity).mockImplementation((model) => {
+        hasCapacityCalls++;
+        // Calls 1-2: initial check (both available)
+        if (hasCapacityCalls <= 2) return true;
+        // Call 3: verification of opus → exhausted
+        if (model === 'opus') return false;
+        // Call 4: fallback check sonnet → available
+        return true;
+      });
+      vi.mocked(mockTaskQueue.getNextForModel).mockImplementation(model =>
+        model === 'opus' ? task : undefined
+      );
+
+      const spawnCallback = vi.fn().mockResolvedValue('session-fallback');
+      const result = await scheduler.scheduleNext(spawnCallback);
+
+      expect(result.status).toBe('scheduled');
+      expect(result.tasks?.[0].model).toBe('sonnet');
+    });
+
+    it('should return no_capacity when both models exhausted during verification', async () => {
+      const task = createQueuedTask({
+        id: 'task-no-cap',
+        estimated_sessions_opus: 1,
+        estimated_sessions_sonnet: 0,
+      });
+
+      let hasCapacityCalls = 0;
+      vi.mocked(mockTaskQueue.isEmpty).mockReturnValue(false);
+      vi.mocked(mockCapacityTracker.hasCapacity).mockImplementation(() => {
+        hasCapacityCalls++;
+        // Calls 1-2: initial check (both available)
+        if (hasCapacityCalls <= 2) return true;
+        // Calls 3+: verification → all exhausted
+        return false;
+      });
+      vi.mocked(mockTaskQueue.getNextForModel).mockImplementation(model =>
+        model === 'opus' ? task : undefined
+      );
+
+      const result = await scheduler.scheduleNext();
+
+      expect(result.status).toBe('no_capacity');
+      expect(result.scheduled).toBe(0);
+    });
+
+    it('should return idle when no suitable task found for any model', async () => {
+      vi.mocked(mockTaskQueue.isEmpty).mockReturnValue(false);
+      vi.mocked(mockCapacityTracker.hasCapacity).mockReturnValue(true);
+      vi.mocked(mockTaskQueue.getNextForModel).mockReturnValue(undefined);
+
+      const result = await scheduler.scheduleNext();
+
+      expect(result.status).toBe('idle');
+      expect(result.scheduled).toBe(0);
+    });
+
+    it('should fallback to opus when task wants sonnet but only opus capacity available', async () => {
+      // Line 109: sets targetModel='sonnet', then line 157-168: falls back to opus
+      const sonnetTask = createQueuedTask({
+        id: 'task-sonnet-only',
+        estimated_sessions_opus: 0,
+        estimated_sessions_sonnet: 1,
+      });
+
+      vi.mocked(mockTaskQueue.isEmpty).mockReturnValue(false);
+      vi.mocked(mockCapacityTracker.hasCapacity).mockImplementation(model => model === 'opus');
+      vi.mocked(mockTaskQueue.getNextForModel).mockImplementation(model =>
+        model === 'opus' ? sonnetTask : undefined
+      );
+
+      const spawnCallback = vi.fn().mockResolvedValue('session-forced');
+      const result = await scheduler.scheduleNext(spawnCallback);
+
+      expect(result.status).toBe('scheduled');
+      // Task wanted sonnet, line 109 sets sonnet, but verification fallback (line 160) switches to opus
+      expect(result.tasks?.[0].model).toBe('opus');
+    });
+
+    it('should force sonnet for opus task when only sonnet capacity available', async () => {
+      const opusTask = createQueuedTask({
+        id: 'task-force-sonnet',
+        estimated_sessions_opus: 1,
+        estimated_sessions_sonnet: 0,
+      });
+
+      vi.mocked(mockTaskQueue.isEmpty).mockReturnValue(false);
+      vi.mocked(mockCapacityTracker.hasCapacity).mockImplementation(model => model === 'sonnet');
+      vi.mocked(mockTaskQueue.getNextForModel).mockImplementation(model =>
+        model === 'sonnet' ? opusTask : undefined
+      );
+
+      const spawnCallback = vi.fn().mockResolvedValue('session-forced-sonnet');
+      const result = await scheduler.scheduleNext(spawnCallback);
+
+      expect(result.status).toBe('scheduled');
+      expect(result.tasks?.[0].model).toBe('sonnet');
+    });
+
+    it('should use agentManager.spawnAgent when no spawnCallback provided', async () => {
+      const task = createQueuedTask({ id: 'task-default-spawn', estimated_sessions_sonnet: 1 });
+
+      vi.mocked(mockTaskQueue.isEmpty).mockReturnValue(false);
+      vi.mocked(mockCapacityTracker.hasCapacity).mockReturnValue(true);
+      vi.mocked(mockTaskQueue.getNextForModel).mockReturnValue(task);
+      vi.mocked(mockAgentManager.spawnAgent).mockResolvedValue('default-session');
+
+      const result = await scheduler.scheduleNext();
+
+      expect(mockAgentManager.spawnAgent).toHaveBeenCalledWith('task-default-spawn', {
+        model: 'sonnet',
+        projectPath: expect.any(String),
+      });
+      expect(result.status).toBe('scheduled');
+      expect(result.tasks?.[0].sessionId).toBe('default-session');
+    });
   });
 
   describe('scheduleAll', () => {
@@ -273,6 +461,33 @@ describe('Scheduler', () => {
       const results = await scheduler.scheduleAll(spawnCallback);
 
       expect(results.length).toBe(1);
+    });
+
+    it('should break and return empty when scheduleNext returns idle', async () => {
+      // Queue reports non-empty for canSchedule, but getNextForModel returns nothing
+      vi.mocked(mockTaskQueue.isEmpty).mockReturnValue(false);
+      vi.mocked(mockCapacityTracker.hasCapacity).mockReturnValue(true);
+      vi.mocked(mockTaskQueue.getNextForModel).mockReturnValue(undefined);
+
+      const results = await scheduler.scheduleAll();
+
+      expect(results).toEqual([]);
+    });
+
+    it('should break after first error and include error result', async () => {
+      const task = createQueuedTask({ id: 'task-err', estimated_sessions_sonnet: 1 });
+
+      vi.mocked(mockTaskQueue.isEmpty).mockReturnValue(false);
+      vi.mocked(mockCapacityTracker.hasCapacity).mockReturnValue(true);
+      vi.mocked(mockTaskQueue.getNextForModel).mockReturnValue(task);
+
+      const spawnCallback = vi.fn().mockRejectedValue(new Error('spawn failed'));
+
+      const results = await scheduler.scheduleAll(spawnCallback);
+
+      expect(results.length).toBe(1);
+      expect(results[0].status).toBe('error');
+      expect(results[0].error).toBe('spawn failed');
     });
   });
 
@@ -406,6 +621,20 @@ describe('Scheduler', () => {
       vi.mocked(mockCapacityTracker.hasCapacity).mockReturnValue(false);
 
       expect(scheduler.canSchedule()).toBe(false);
+    });
+  });
+
+  describe('getTaskQueue', () => {
+    it('should return the task queue instance', () => {
+      const queue = scheduler.getTaskQueue();
+      expect(queue).toBe(mockTaskQueue);
+    });
+  });
+
+  describe('getCapacityTracker', () => {
+    it('should return the capacity tracker instance', () => {
+      const tracker = scheduler.getCapacityTracker();
+      expect(tracker).toBe(mockCapacityTracker);
     });
   });
 });
