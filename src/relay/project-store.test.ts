@@ -2,9 +2,9 @@
  * Tests for ProjectStore
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ProjectStore } from './project-store.js';
-import { mkdtempSync, rmSync, mkdirSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -57,6 +57,150 @@ describe('ProjectStore', () => {
       store2.load();
 
       expect(store2.get('C123')).toBe('/path/to/project');
+    });
+  });
+
+  describe('utility methods', () => {
+    beforeEach(() => {
+      projectStore = new ProjectStore(storePath);
+    });
+
+    it('should return undefined when projectsBaseDir not set', () => {
+      expect(projectStore.getProjectsBaseDir()).toBeUndefined();
+    });
+
+    it('should return projectsBaseDir when set via constructor', () => {
+      const store = new ProjectStore(storePath, '/some/dir');
+      expect(store.getProjectsBaseDir()).toBe('/some/dir');
+    });
+
+    it('should delete a mapping and return true', () => {
+      projectStore.set('C123', '/path/to/project');
+      expect(projectStore.delete('C123')).toBe(true);
+      expect(projectStore.get('C123')).toBeUndefined();
+    });
+
+    it('should return false when deleting non-existent mapping', () => {
+      expect(projectStore.delete('nonexistent')).toBe(false);
+    });
+
+    it('should persist deletion to disk', () => {
+      projectStore.set('C123', '/path/a');
+      projectStore.set('C456', '/path/b');
+      projectStore.delete('C123');
+
+      const store2 = new ProjectStore(storePath);
+      store2.load();
+      expect(store2.get('C123')).toBeUndefined();
+      expect(store2.get('C456')).toBe('/path/b');
+    });
+
+    it('should check if mapping exists', () => {
+      expect(projectStore.has('C123')).toBe(false);
+      projectStore.set('C123', '/path/to/project');
+      expect(projectStore.has('C123')).toBe(true);
+    });
+
+    it('should return the number of mappings', () => {
+      expect(projectStore.size()).toBe(0);
+      projectStore.set('C1', '/a');
+      projectStore.set('C2', '/b');
+      expect(projectStore.size()).toBe(2);
+    });
+
+    it('should return all channel IDs', () => {
+      projectStore.set('C1', '/a');
+      projectStore.set('C2', '/b');
+      expect(projectStore.channels()).toEqual(expect.arrayContaining(['C1', 'C2']));
+      expect(projectStore.channels()).toHaveLength(2);
+    });
+  });
+
+  describe('load', () => {
+    it('should start fresh when file does not exist', () => {
+      projectStore = new ProjectStore(storePath);
+      projectStore.load();
+      expect(projectStore.size()).toBe(0);
+    });
+
+    it('should load existing mappings from disk', () => {
+      projectStore = new ProjectStore(storePath);
+      projectStore.set('C1', '/path/a');
+      projectStore.set('C2', '/path/b');
+
+      const store2 = new ProjectStore(storePath);
+      store2.load();
+      expect(store2.get('C1')).toBe('/path/a');
+      expect(store2.get('C2')).toBe('/path/b');
+      expect(store2.size()).toBe(2);
+    });
+
+    it('should throw on corrupt JSON file', () => {
+      writeFileSync(storePath, 'NOT VALID JSON{{{', 'utf-8');
+
+      projectStore = new ProjectStore(storePath);
+      expect(() => projectStore.load()).toThrow();
+    });
+
+    it('should skip non-string values during load', () => {
+      writeFileSync(storePath, JSON.stringify({ C1: '/valid', C2: 123, C3: null }), 'utf-8');
+
+      projectStore = new ProjectStore(storePath);
+      projectStore.load();
+      expect(projectStore.get('C1')).toBe('/valid');
+      expect(projectStore.get('C2')).toBeUndefined();
+      expect(projectStore.get('C3')).toBeUndefined();
+      expect(projectStore.size()).toBe(1);
+    });
+  });
+
+  describe('save error handling', () => {
+    it('should not throw when save fails', () => {
+      projectStore = new ProjectStore('/nonexistent-dir/impossible/store.json');
+      expect(() => {
+        projectStore.set('C1', '/path');
+      }).not.toThrow();
+    });
+  });
+
+  describe('clear', () => {
+    beforeEach(() => {
+      projectStore = new ProjectStore(storePath);
+    });
+
+    it('should remove all mappings', () => {
+      projectStore.set('C1', '/a');
+      projectStore.set('C2', '/b');
+      projectStore.clear();
+      expect(projectStore.size()).toBe(0);
+    });
+
+    it('should persist empty state to disk', () => {
+      projectStore.set('C1', '/a');
+      projectStore.clear();
+
+      const store2 = new ProjectStore(storePath);
+      store2.load();
+      expect(store2.size()).toBe(0);
+    });
+  });
+
+  describe('toObject', () => {
+    beforeEach(() => {
+      projectStore = new ProjectStore(storePath);
+    });
+
+    it('should return empty object when no mappings', () => {
+      expect(projectStore.toObject()).toEqual({});
+    });
+
+    it('should return all mappings as plain object', () => {
+      projectStore.set('C1', '/path/a');
+      projectStore.set('C2', '/path/b');
+      expect(projectStore.toObject()).toEqual({
+        C1: '/path/a',
+        C2: '/path/b',
+      });
     });
   });
 
@@ -128,6 +272,33 @@ describe('ProjectStore', () => {
 
       const result = storeWithoutBase.resolveProjectPath('trafficcontrol');
       expect(result).toBe(join(projectsDir, 'traffic-control'));
+    });
+
+    it('should return null when projectsBaseDir does not exist on disk', () => {
+      const store = new ProjectStore(storePath, '/nonexistent/base/dir');
+      const result = store.resolveProjectPath('someproject');
+      expect(result).toBeNull();
+    });
+
+    it('should return null when readdirSync throws an error', () => {
+      // Use a file as projectsBaseDir - existsSync returns true but readdirSync throws ENOTDIR
+      const filePath = join(tempDir, 'not-a-dir.txt');
+      writeFileSync(filePath, 'not a directory', 'utf-8');
+
+      const store = new ProjectStore(storePath, filePath);
+      const result = store.resolveProjectPath('someproject');
+      expect(result).toBeNull();
+    });
+
+    it('should trim whitespace from input', () => {
+      const result = projectStore.resolveProjectPath('  traffic-control  ');
+      expect(result).toBe(join(projectsDir, 'traffic-control'));
+    });
+
+    it('should handle relative path-like input with slashes', () => {
+      // Input containing "/" is treated as a path, not a project name
+      const result = projectStore.resolveProjectPath('some/relative/path');
+      expect(result).toBeNull();
     });
   });
 });
