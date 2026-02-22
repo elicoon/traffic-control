@@ -13,10 +13,12 @@
     "dev": "tsx watch src/index.ts",
     "test": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run --dir src/__tests__/integration",
     "cli": "tsx bin/trafficcontrol.ts",
     "cleanup:test-data": "tsx bin/cleanup-test-data.ts",
     "relay": "tsx src/relay/index.ts",
-    "relay:dev": "tsx watch src/relay/index.ts"
+    "relay:dev": "tsx watch src/relay/index.ts",
+    "benchmark": "vitest run --dir src/__tests__/benchmarks"
   },
   "keywords": [
     "claude",
