@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { RetrospectiveRepository } from './retrospective-repository.js';
 import { ProjectRepository } from '../db/repositories/projects.js';
 import { TaskRepository } from '../db/repositories/tasks.js';
@@ -274,6 +274,225 @@ describe('RetrospectiveRepository', () => {
 
       // Clean up
       await retrospectiveRepo.delete(retro.id);
+    });
+  });
+
+  describe('getBySession', () => {
+    const testSessionId = 'a0000000-0000-0000-0000-000000000001';
+
+    it('should get retrospectives by session id', async () => {
+      const retro = await retrospectiveRepo.create({
+        projectId: testProjectId,
+        taskId: testTaskId,
+        sessionId: testSessionId,
+        title: 'Session Retrospective',
+        triggerType: 'blocker',
+        whatHappened: 'Agent blocked during session'
+      });
+
+      const retros = await retrospectiveRepo.getBySession(testSessionId);
+
+      expect(retros.length).toBeGreaterThan(0);
+      expect(retros.some(r => r.id === retro.id)).toBe(true);
+      expect(retros.every(r => r.sessionId === testSessionId)).toBe(true);
+
+      // Clean up
+      await retrospectiveRepo.delete(retro.id);
+    });
+
+    it('should return empty array for session with no retrospectives', async () => {
+      const retros = await retrospectiveRepo.getBySession('b0000000-0000-0000-0000-000000000099');
+      expect(retros).toEqual([]);
+    });
+  });
+
+  describe('update edge cases', () => {
+    it('should update title and whatHappened fields', async () => {
+      const updated = await retrospectiveRepo.update(testRetrospectiveId, {
+        title: 'Updated Title',
+        whatHappened: 'Updated description of what happened'
+      });
+
+      expect(updated.title).toBe('Updated Title');
+      expect(updated.whatHappened).toBe('Updated description of what happened');
+    });
+
+    it('should update resolvedAt field', async () => {
+      const resolveDate = new Date('2026-01-15T12:00:00Z');
+      const updated = await retrospectiveRepo.update(testRetrospectiveId, {
+        resolvedAt: resolveDate
+      });
+
+      expect(updated.resolvedAt).toBeInstanceOf(Date);
+      expect(updated.resolvedAt!.toISOString()).toBe(resolveDate.toISOString());
+    });
+  });
+
+  describe('error handling with mocked client', () => {
+    const mockError = { message: 'connection refused', code: '500', details: '', hint: '' };
+
+    function createErrorMockClient() {
+      const mockChain = {
+        select: vi.fn().mockReturnThis(),
+        insert: vi.fn().mockReturnThis(),
+        update: vi.fn().mockReturnThis(),
+        delete: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        not: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: null, error: mockError }),
+        then: undefined as unknown,
+      };
+
+      // Make chainable methods resolve with error for list queries
+      const listResult = { data: null, error: mockError };
+      chainChain(mockChain.order, listResult);
+      chainChain(mockChain.limit, listResult);
+
+      const mockClient = {
+        from: vi.fn().mockReturnValue(mockChain),
+      } as unknown as ReturnType<typeof createSupabaseClient>;
+
+      return { mockClient, mockChain };
+    }
+
+    function chainChain(fn: ReturnType<typeof vi.fn>, result: unknown) {
+      fn.mockImplementation(() => {
+        const proxy = new Proxy({}, {
+          get(_target, prop) {
+            if (prop === 'then') {
+              return (resolve: (val: unknown) => void) => {
+                resolve(result);
+                return Promise.resolve(result);
+              };
+            }
+            return vi.fn().mockReturnValue(proxy);
+          }
+        });
+        return proxy;
+      });
+    }
+
+    it('should throw on non-PGRST116 error in getById', async () => {
+      const { mockClient } = createErrorMockClient();
+      const repo = new RetrospectiveRepository(mockClient);
+
+      await expect(repo.getById('some-id')).rejects.toThrow(
+        'Failed to get retrospective: connection refused'
+      );
+    });
+
+    it('should throw on error in create', async () => {
+      const { mockClient } = createErrorMockClient();
+      const repo = new RetrospectiveRepository(mockClient);
+
+      await expect(repo.create({
+        projectId: 'proj-1',
+        title: 'Test',
+        triggerType: 'manual',
+        whatHappened: 'test'
+      })).rejects.toThrow('Failed to create retrospective: connection refused');
+    });
+
+    it('should throw on error in getByTask', async () => {
+      const { mockClient, mockChain } = createErrorMockClient();
+      // For list queries, make order return error result
+      mockChain.order.mockResolvedValue({ data: null, error: mockError });
+      const repo = new RetrospectiveRepository(mockClient);
+
+      await expect(repo.getByTask('task-1')).rejects.toThrow(
+        'Failed to get retrospectives by task: connection refused'
+      );
+    });
+
+    it('should throw on error in getByProject', async () => {
+      const { mockClient, mockChain } = createErrorMockClient();
+      mockChain.order.mockResolvedValue({ data: null, error: mockError });
+      const repo = new RetrospectiveRepository(mockClient);
+
+      await expect(repo.getByProject('proj-1')).rejects.toThrow(
+        'Failed to get retrospectives by project: connection refused'
+      );
+    });
+
+    it('should throw on error in getByTriggerType', async () => {
+      const { mockClient, mockChain } = createErrorMockClient();
+      mockChain.order.mockResolvedValue({ data: null, error: mockError });
+      const repo = new RetrospectiveRepository(mockClient);
+
+      await expect(repo.getByTriggerType('blocker')).rejects.toThrow(
+        'Failed to get retrospectives by trigger type: connection refused'
+      );
+    });
+
+    it('should throw on error in getUnresolved', async () => {
+      const { mockClient, mockChain } = createErrorMockClient();
+      mockChain.order.mockResolvedValue({ data: null, error: mockError });
+      const repo = new RetrospectiveRepository(mockClient);
+
+      await expect(repo.getUnresolved()).rejects.toThrow(
+        'Failed to get unresolved retrospectives: connection refused'
+      );
+    });
+
+    it('should throw on error in update', async () => {
+      const { mockClient } = createErrorMockClient();
+      const repo = new RetrospectiveRepository(mockClient);
+
+      await expect(repo.update('id-1', { title: 'new' })).rejects.toThrow(
+        'Failed to update retrospective: connection refused'
+      );
+    });
+
+    it('should throw on error in resolve', async () => {
+      const { mockClient } = createErrorMockClient();
+      const repo = new RetrospectiveRepository(mockClient);
+
+      await expect(repo.resolve('id-1')).rejects.toThrow(
+        'Failed to resolve retrospective: connection refused'
+      );
+    });
+
+    it('should throw on error in delete', async () => {
+      const { mockClient, mockChain } = createErrorMockClient();
+      mockChain.eq.mockResolvedValue({ error: mockError });
+      const repo = new RetrospectiveRepository(mockClient);
+
+      await expect(repo.delete('id-1')).rejects.toThrow(
+        'Failed to delete retrospective: connection refused'
+      );
+    });
+
+    it('should throw on error in getRecentLearnings', async () => {
+      const { mockClient, mockChain } = createErrorMockClient();
+      mockChain.limit.mockResolvedValue({ data: null, error: mockError });
+      const repo = new RetrospectiveRepository(mockClient);
+
+      await expect(repo.getRecentLearnings()).rejects.toThrow(
+        'Failed to get recent learnings: connection refused'
+      );
+    });
+
+    it('should throw on error in getLearningsByCategory', async () => {
+      const { mockClient, mockChain } = createErrorMockClient();
+      mockChain.order.mockResolvedValue({ data: null, error: mockError });
+      const repo = new RetrospectiveRepository(mockClient);
+
+      await expect(repo.getLearningsByCategory('testing')).rejects.toThrow(
+        'Failed to get learnings by category: connection refused'
+      );
+    });
+
+    it('should throw on error in getBySession', async () => {
+      const { mockClient, mockChain } = createErrorMockClient();
+      mockChain.order.mockResolvedValue({ data: null, error: mockError });
+      const repo = new RetrospectiveRepository(mockClient);
+
+      await expect(repo.getBySession('session-1')).rejects.toThrow(
+        'Failed to get retrospectives by session: connection refused'
+      );
     });
   });
 });
