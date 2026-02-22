@@ -7,6 +7,7 @@ import {
 import { TaskRepository } from '../db/repositories/tasks.js';
 import { ProjectRepository } from '../db/repositories/projects.js';
 import { createSupabaseClient } from '../db/client.js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 describe('CalibrationEngine', () => {
   let engine: CalibrationEngine;
@@ -543,6 +544,155 @@ describe('CalibrationEngine', () => {
       expect(Number.isInteger(calibrated.calibratedEstimate.sessionsOpus)).toBe(true);
       expect(Number.isInteger(calibrated.calibratedEstimate.sessionsSonnet)).toBe(true);
       expect(Number.isInteger(calibrated.calibratedEstimate.interventionMinutes)).toBe(true);
+    });
+  });
+});
+
+describe('CalibrationEngine (unit — mocked client)', () => {
+  function mockChain(overrides: Record<string, unknown> = {}) {
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      eq: () => chain,
+      not: () => chain,
+      order: () => chain,
+      single: () => chain,
+      insert: () => chain,
+      delete: () => chain,
+      ...overrides,
+    };
+    return chain;
+  }
+
+  function createMockClient(fromFn: (table: string) => unknown) {
+    return { from: fromFn } as unknown as SupabaseClient;
+  }
+
+  describe('getCalibrationFactor error handling', () => {
+    it('should throw on database error (non-PGRST116)', async () => {
+      const client = createMockClient(() =>
+        mockChain({
+          single: () => Promise.resolve({ data: null, error: { code: 'OTHER', message: 'db down' } }),
+        })
+      );
+      const engine = new CalibrationEngine(client);
+
+      await expect(engine.getCalibrationFactor('proj-1', 'high'))
+        .rejects.toThrow('Failed to get calibration factor: db down');
+    });
+
+    it('should return null for PGRST116 (no rows)', async () => {
+      const client = createMockClient(() =>
+        mockChain({
+          single: () => Promise.resolve({ data: null, error: { code: 'PGRST116', message: 'no rows' } }),
+        })
+      );
+      const engine = new CalibrationEngine(client);
+
+      const result = await engine.getCalibrationFactor('proj-1', 'high');
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('getProjectCalibrationFactors error handling', () => {
+    it('should throw on database error', async () => {
+      const client = createMockClient(() =>
+        mockChain({
+          order: () => Promise.resolve({ data: null, error: { message: 'connection refused' } }),
+        })
+      );
+      const engine = new CalibrationEngine(client);
+
+      await expect(engine.getProjectCalibrationFactors('proj-1'))
+        .rejects.toThrow('Failed to get calibration factors: connection refused');
+    });
+  });
+
+  describe('calculateGlobalCalibrationFactors error handling', () => {
+    it('should throw on database error', async () => {
+      const client = createMockClient(() =>
+        mockChain({
+          not: () => Promise.resolve({ data: null, error: { message: 'timeout' } }),
+        })
+      );
+      const engine = new CalibrationEngine(client);
+
+      await expect(engine.calculateGlobalCalibrationFactors())
+        .rejects.toThrow('Failed to get completed tasks: timeout');
+    });
+
+    it('should return empty array when data is null', async () => {
+      const client = createMockClient(() =>
+        mockChain({
+          not: () => Promise.resolve({ data: null, error: null }),
+        })
+      );
+      const engine = new CalibrationEngine(client);
+
+      const result = await engine.calculateGlobalCalibrationFactors();
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('clearCalibrationFactors error handling', () => {
+    it('should throw on database error', async () => {
+      const client = createMockClient(() =>
+        mockChain({
+          eq: () => Promise.resolve({ error: { message: 'delete failed' } }),
+        })
+      );
+      const engine = new CalibrationEngine(client);
+
+      await expect(engine.clearCalibrationFactors('proj-1'))
+        .rejects.toThrow('Failed to clear calibration factors: delete failed');
+    });
+  });
+
+  describe('getCompletedTasks error handling (via calculateCalibrationFactors)', () => {
+    it('should throw on database error', async () => {
+      const client = createMockClient(() =>
+        mockChain({
+          not: () => Promise.resolve({ data: null, error: { message: 'query failed' } }),
+        })
+      );
+      const engine = new CalibrationEngine(client);
+
+      await expect(engine.calculateCalibrationFactors('proj-1'))
+        .rejects.toThrow('Failed to get completed tasks: query failed');
+    });
+  });
+
+  describe('saveCalibrationFactors error handling', () => {
+    it('should throw when insert fails during save', async () => {
+      const completedTasks = Array.from({ length: 5 }, (_, i) => ({
+        id: `task-${i}`,
+        project_id: 'proj-1',
+        status: 'complete',
+        complexity_estimate: 'high',
+        estimated_sessions_opus: 2,
+        estimated_sessions_sonnet: 2,
+        actual_sessions_opus: 3,
+        actual_sessions_sonnet: 3,
+        completed_at: new Date().toISOString(),
+      }));
+
+      const client = createMockClient((table: string) => {
+        if (table === 'tc_tasks') {
+          return mockChain({
+            not: () => Promise.resolve({ data: completedTasks, error: null }),
+          });
+        }
+        if (table === 'tc_calibration_factors') {
+          const chain = mockChain();
+          chain.eq = () => Promise.resolve({ error: null });
+          chain.single = () => Promise.resolve({ data: null, error: { message: 'insert failed' } });
+          return chain;
+        }
+        return mockChain();
+      });
+      const engine = new CalibrationEngine(client);
+
+      await expect(engine.saveCalibrationFactors('proj-1'))
+        .rejects.toThrow('Failed to save calibration factor: insert failed');
     });
   });
 });
