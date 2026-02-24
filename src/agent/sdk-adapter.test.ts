@@ -49,6 +49,7 @@ describe('SDKAdapter', () => {
         is_error: false,
         num_turns: 3,
         result: 'Task completed',
+        stop_reason: 'end_turn',
         total_cost_usd: 0.05,
         usage: {
           input_tokens: 1000,
@@ -83,6 +84,7 @@ describe('SDKAdapter', () => {
         is_error: false,
         num_turns: 1,
         result: 'Done',
+        stop_reason: 'end_turn',
         total_cost_usd: 0,
         usage: {
           input_tokens: 0,
@@ -114,6 +116,7 @@ describe('SDKAdapter', () => {
         is_error: false,
         num_turns: 3,
         result: 'Task completed',
+        stop_reason: 'end_turn',
         total_cost_usd: 0,
         usage: {
           input_tokens: 1_000_000,
@@ -143,6 +146,7 @@ describe('SDKAdapter', () => {
         is_error: false,
         num_turns: 2,
         result: 'Done',
+        stop_reason: 'end_turn',
         total_cost_usd: 0,
         usage: {
           input_tokens: 1_000_000,
@@ -185,6 +189,7 @@ describe('SDKAdapter', () => {
         is_error: false,
         num_turns: 3,
         result: 'Done',
+        stop_reason: 'end_turn',
         total_cost_usd: 0,
         usage: {
           input_tokens: 100_000,
@@ -215,6 +220,7 @@ describe('SDKAdapter', () => {
         is_error: false,
         num_turns: 1,
         result: 'Done',
+        stop_reason: 'end_turn',
         total_cost_usd: 0,
         usage: {
           input_tokens: 0,
@@ -243,6 +249,7 @@ describe('SDKAdapter', () => {
         is_error: false,
         num_turns: 1,
         result: 'Done',
+        stop_reason: 'end_turn',
         total_cost_usd: 0.42,
         usage: {
           input_tokens: 1000,
@@ -379,6 +386,7 @@ describe('SDKAdapter', () => {
         is_error: false,
         num_turns: 3,
         result: 'Task completed successfully',
+        stop_reason: 'end_turn',
         total_cost_usd: 0.05,
         usage: {
           input_tokens: 1000,
@@ -411,6 +419,7 @@ describe('SDKAdapter', () => {
         duration_api_ms: 900,
         is_error: true,
         num_turns: 1,
+        stop_reason: null,
         total_cost_usd: 0.01,
         usage: {
           input_tokens: 100,
