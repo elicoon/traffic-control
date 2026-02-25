@@ -2,16 +2,22 @@
  * Integration test for SDK adapter.
  * Tests that agents can be spawned and execute tasks.
  *
- * NOTE: This test requires a valid ANTHROPIC_API_KEY with credits.
- * Skip if running in CI or without API access.
+ * OPT-IN ONLY: Set RUN_INTEGRATION_TESTS=true to run these tests.
+ *
+ * These tests are opt-in rather than opt-out because:
+ * 1. They require a valid ANTHROPIC_API_KEY with credits (costs real money)
+ * 2. SDK streaming behavior can change between versions, making assertions fragile
+ * 3. They should not run during normal `npm test` to avoid surprise API charges
+ *
+ * To run: RUN_INTEGRATION_TESTS=true ANTHROPIC_API_KEY=sk-... npm test -- sdk-integration
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { SDKAdapter, MODEL_MAP, SDKAdapterConfig } from './sdk-adapter.js';
 import { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
-// Skip integration tests if no API key or if explicitly skipped
-const SKIP_INTEGRATION = process.env.SKIP_INTEGRATION_TESTS === 'true' || !process.env.ANTHROPIC_API_KEY;
+// Opt-in: only run when explicitly requested AND an API key is available
+const SKIP_INTEGRATION = process.env.RUN_INTEGRATION_TESTS !== 'true' || !process.env.ANTHROPIC_API_KEY;
 
 describe.skipIf(SKIP_INTEGRATION)('SDK Integration', () => {
   let adapter: SDKAdapter;
