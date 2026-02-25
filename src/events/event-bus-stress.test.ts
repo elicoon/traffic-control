@@ -41,7 +41,6 @@ describe('EventBus stress tests', () => {
 
       expect(received).toBe(EVENT_COUNT);
       expect(throughput).toBeGreaterThan(100); // >100 events/ms = >100k events/sec
-      console.log(`Throughput: ${throughput.toFixed(1)} events/ms (${EVENT_COUNT} events in ${elapsed.toFixed(1)}ms)`);
     });
 
     it('should emit 5000 events with multiple handlers and exceed 50 events/ms throughput', () => {
@@ -65,7 +64,6 @@ describe('EventBus stress tests', () => {
         expect(c).toBe(EVENT_COUNT);
       }
       expect(throughput).toBeGreaterThan(50); // Lower threshold with 5 handlers
-      console.log(`Multi-handler throughput: ${throughput.toFixed(1)} events/ms (${HANDLER_COUNT} handlers, ${EVENT_COUNT} events in ${elapsed.toFixed(1)}ms)`);
     });
   });
 
@@ -75,7 +73,9 @@ describe('EventBus stress tests', () => {
       let received = 0;
       bus.on('agent:spawned', () => { received++; });
 
-      // Force GC if available, take baseline
+      // Note: global.gc() is only available with --expose-gc flag.
+      // Without it, heap measurements are approximate; the 20MB threshold
+      // accounts for this imprecision.
       if (global.gc) global.gc();
       const heapBefore = process.memoryUsage().heapUsed;
 
@@ -92,7 +92,6 @@ describe('EventBus stress tests', () => {
       // Allow up to 20MB growth to account for V8 internals and test framework overhead.
       const growthMB = (heapAfter - heapBefore) / (1024 * 1024);
       expect(growthMB).toBeLessThan(20);
-      console.log(`Memory growth: ${growthMB.toFixed(2)}MB after ${EVENT_COUNT} events`);
     });
 
     it('should keep history buffer bounded at configured size', () => {
@@ -133,8 +132,6 @@ describe('EventBus stress tests', () => {
       // Conservative thresholds — should be well under these on any modern machine
       expect(p99).toBeLessThan(1); // p99 < 1ms
       expect(p95).toBeLessThan(0.5); // p95 < 0.5ms
-
-      console.log(`Latency distribution (${EVENT_COUNT} events): p50=${p50.toFixed(4)}ms, p95=${p95.toFixed(4)}ms, p99=${p99.toFixed(4)}ms`);
     });
 
     it('should maintain stable latency with pattern handlers under load', () => {
@@ -160,8 +157,6 @@ describe('EventBus stress tests', () => {
       // Slightly higher thresholds with pattern matching overhead
       expect(p99).toBeLessThan(2); // p99 < 2ms
       expect(p95).toBeLessThan(1); // p95 < 1ms
-
-      console.log(`Pattern latency (${EVENT_COUNT} events, 3 handlers): p50=${p50.toFixed(4)}ms, p95=${p95.toFixed(4)}ms, p99=${p99.toFixed(4)}ms`);
     });
   });
 
