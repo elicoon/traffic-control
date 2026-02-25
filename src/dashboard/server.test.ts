@@ -488,6 +488,48 @@ describe('DashboardServer', () => {
     });
   });
 
+  describe('API error format consistency', () => {
+    it('should return JSON with { error, statusCode } for unknown API routes', async () => {
+      await dashboardServer.start();
+      const app = dashboardServer.getApp();
+
+      const response = await request(app).get('/api/nonexistent-route');
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({ error: 'Not found', statusCode: 404 });
+    });
+
+    it('should return JSON 404 for POST to unknown API routes', async () => {
+      await dashboardServer.start();
+      const app = dashboardServer.getApp();
+
+      const response = await request(app).post('/api/nonexistent-route');
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({ error: 'Not found', statusCode: 404 });
+    });
+
+    it('should return { error, statusCode } for known route errors', async () => {
+      mockProjectRepo.getById.mockResolvedValue(null);
+
+      await dashboardServer.start();
+      const app = dashboardServer.getApp();
+
+      const response = await request(app).get('/api/projects/non-existent');
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({ error: 'Project not found', statusCode: 404 });
+    });
+
+    it('should return { error, statusCode } for 400 validation errors', async () => {
+      await dashboardServer.start();
+      const app = dashboardServer.getApp();
+
+      const response = await request(app)
+        .post('/api/tasks/task-1/priority')
+        .send({ priority: 'invalid' });
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({ error: 'Priority must be a number', statusCode: 400 });
+    });
+  });
+
   describe('getAddress', () => {
     it('should return server address when running', async () => {
       await dashboardServer.start();

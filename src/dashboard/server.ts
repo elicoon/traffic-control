@@ -120,9 +120,15 @@ export class DashboardServer {
     this.app.post('/api/projects/:id/pause', createPauseProjectHandler(projectRepo, broadcastEvent));
     this.app.post('/api/projects/:id/resume', createResumeProjectHandler(projectRepo, broadcastEvent));
 
+    // 404 catch-all for unknown API routes (must come after all API route registrations)
+    this.app.all('/api/{*path}', (_req: Request, res: Response) => {
+      res.status(404).json({ error: 'Not found', statusCode: 404 });
+    });
+
+    // Error-handling middleware for unhandled route errors
     this.app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
       log.error('Dashboard server error', err);
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: 'Internal server error', statusCode: 500 });
     });
   }
 

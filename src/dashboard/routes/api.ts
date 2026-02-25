@@ -100,7 +100,7 @@ export function createStatusHandler(
       res.json(status);
     } catch (error) {
       log.error('Error getting status', error as Error);
-      res.status(500).json({ error: 'Failed to get system status' });
+      res.status(500).json({ error: 'Failed to get system status', statusCode: 500 });
     }
   };
 }
@@ -140,7 +140,7 @@ export function createProjectsHandler(
       res.json(summaries);
     } catch (error) {
       log.error('Error getting projects', error as Error);
-      res.status(500).json({ error: 'Failed to get projects' });
+      res.status(500).json({ error: 'Failed to get projects', statusCode: 500 });
     }
   };
 }
@@ -158,7 +158,7 @@ export function createProjectHandler(
       const projectId = req.params.id as string;
       const project = await projectRepo.getById(projectId);
       if (!project) {
-        res.status(404).json({ error: 'Project not found' });
+        res.status(404).json({ error: 'Project not found', statusCode: 404 });
         return;
       }
 
@@ -172,7 +172,7 @@ export function createProjectHandler(
       });
     } catch (error) {
       log.error('Error getting project', error as Error);
-      res.status(500).json({ error: 'Failed to get project details' });
+      res.status(500).json({ error: 'Failed to get project details', statusCode: 500 });
     }
   };
 }
@@ -216,7 +216,7 @@ export function createAgentsHandler(
       res.json(agentInfo);
     } catch (error) {
       log.error('Error getting agents', error as Error);
-      res.status(500).json({ error: 'Failed to get agents' });
+      res.status(500).json({ error: 'Failed to get agents', statusCode: 500 });
     }
   };
 }
@@ -231,7 +231,7 @@ export function createTasksHandler(taskRepo: TaskRepository): RequestHandler {
       res.json(tasks);
     } catch (error) {
       log.error('Error getting tasks', error as Error);
-      res.status(500).json({ error: 'Failed to get tasks' });
+      res.status(500).json({ error: 'Failed to get tasks', statusCode: 500 });
     }
   };
 }
@@ -283,7 +283,7 @@ export function createMetricsHandler(
       });
     } catch (error) {
       log.error('Error getting metrics', error as Error);
-      res.status(500).json({ error: 'Failed to get metrics' });
+      res.status(500).json({ error: 'Failed to get metrics', statusCode: 500 });
     }
   };
 }
@@ -317,7 +317,7 @@ export function createRecommendationsHandler(
       });
     } catch (error) {
       log.error('Error getting recommendations', error as Error);
-      res.status(500).json({ error: 'Failed to get recommendations' });
+      res.status(500).json({ error: 'Failed to get recommendations', statusCode: 500 });
     }
   };
 }
@@ -335,13 +335,13 @@ export function createUpdateTaskPriorityHandler(
       const { priority } = req.body;
 
       if (typeof priority !== 'number') {
-        res.status(400).json({ error: 'Priority must be a number' });
+        res.status(400).json({ error: 'Priority must be a number', statusCode: 400 });
         return;
       }
 
       const task = await taskRepo.getById(taskId);
       if (!task) {
-        res.status(404).json({ error: 'Task not found' });
+        res.status(404).json({ error: 'Task not found', statusCode: 404 });
         return;
       }
 
@@ -351,7 +351,7 @@ export function createUpdateTaskPriorityHandler(
       broadcastEvent('taskUpdated', { taskId, priority });
     } catch (error) {
       log.error('Error updating task priority', error as Error);
-      res.status(500).json({ error: 'Failed to update task priority' });
+      res.status(500).json({ error: 'Failed to update task priority', statusCode: 500 });
     }
   };
 }
@@ -368,7 +368,7 @@ export function createPauseProjectHandler(
       const projectId = req.params.id as string;
       const project = await projectRepo.getById(projectId);
       if (!project) {
-        res.status(404).json({ error: 'Project not found' });
+        res.status(404).json({ error: 'Project not found', statusCode: 404 });
         return;
       }
 
@@ -378,7 +378,7 @@ export function createPauseProjectHandler(
       broadcastEvent('projectPaused', { projectId });
     } catch (error) {
       log.error('Error pausing project', error as Error);
-      res.status(500).json({ error: 'Failed to pause project' });
+      res.status(500).json({ error: 'Failed to pause project', statusCode: 500 });
     }
   };
 }
@@ -423,7 +423,7 @@ export function createResumeProjectHandler(
       const projectId = req.params.id as string;
       const project = await projectRepo.getById(projectId);
       if (!project) {
-        res.status(404).json({ error: 'Project not found' });
+        res.status(404).json({ error: 'Project not found', statusCode: 404 });
         return;
       }
 
@@ -433,7 +433,7 @@ export function createResumeProjectHandler(
       broadcastEvent('projectResumed', { projectId });
     } catch (error) {
       log.error('Error resuming project', error as Error);
-      res.status(500).json({ error: 'Failed to resume project' });
+      res.status(500).json({ error: 'Failed to resume project', statusCode: 500 });
     }
   };
 }
