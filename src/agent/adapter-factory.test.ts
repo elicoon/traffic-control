@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'node:events';
 import {
   detectAgentMode,
   getAdapter,
@@ -11,20 +12,47 @@ import {
 import { SDKAdapter } from './sdk-adapter.js';
 import { CLIAdapter } from './cli-adapter.js';
 
+// Mock child_process for isCLIAvailable tests
+vi.mock('node:child_process', () => ({
+  spawn: vi.fn(),
+}));
+
+/** Create a mock child process that emits close/stdout events asynchronously */
+function createMockChildProcess(exitCode: number, emitOutput: boolean) {
+  const proc = Object.assign(new EventEmitter(), {
+    stdout: new EventEmitter(),
+    kill: vi.fn(),
+  });
+  process.nextTick(() => {
+    if (emitOutput) {
+      proc.stdout.emit('data', Buffer.from('1.0.0\n'));
+    }
+    proc.emit('close', exitCode);
+  });
+  return proc;
+}
+
 // Store original env
 const originalEnv = { ...process.env };
 
 describe('AdapterFactory', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     // Reset environment before each test
     process.env = { ...originalEnv };
     delete process.env.AGENT_MODE;
     delete process.env.ANTHROPIC_API_KEY;
+
+    // Default: mock spawn to simulate CLI not available
+    const cp = await import('node:child_process');
+    vi.mocked(cp.spawn).mockImplementation(
+      () => createMockChildProcess(1, false) as any,
+    );
   });
 
   afterEach(() => {
     // Restore original environment
     process.env = originalEnv;
+    vi.restoreAllMocks();
   });
 
   describe('detectAgentMode', () => {
@@ -160,17 +188,17 @@ describe('AdapterFactory', () => {
   });
 
   describe('isCLIAvailable', () => {
-    // Note: This test actually tries to run the CLI
-    // In CI without claude installed, this should return false
-
     it('should return a boolean', async () => {
       const result = await isCLIAvailable();
       expect(typeof result).toBe('boolean');
     });
 
-    // This test is environment-dependent
-    it.skip('should return true when claude CLI is installed', async () => {
-      // Only runs in environments with claude CLI
+    it('should return true when claude CLI is installed', async () => {
+      const cp = await import('node:child_process');
+      vi.mocked(cp.spawn).mockImplementation(
+        () => createMockChildProcess(0, true) as any,
+      );
+
       const result = await isCLIAvailable();
       expect(result).toBe(true);
     });
@@ -190,33 +218,44 @@ describe('AdapterFactory', () => {
       expect(typeof modes.reason).toBe('string');
     });
 
-    it('should recommend sdk when API key is available', async () => {
+    it('should recommend sdk when only API key is available', async () => {
       process.env.ANTHROPIC_API_KEY = 'test-key';
       const modes = await getAvailableModes();
 
       expect(modes.sdk).toBe(true);
-      // Recommendation depends on CLI availability
-      if (modes.cli) {
-        expect(modes.recommended).toBe('sdk');
-        expect(modes.reason).toContain('Both modes available');
-      } else {
-        expect(modes.recommended).toBe('sdk');
-        expect(modes.reason).toContain('Only SDK mode available');
-      }
+      expect(modes.cli).toBe(false);
+      expect(modes.recommended).toBe('sdk');
+      expect(modes.reason).toContain('Only SDK mode available');
+    });
+
+    it('should recommend sdk when both modes are available', async () => {
+      process.env.ANTHROPIC_API_KEY = 'test-key';
+      const cp = await import('node:child_process');
+      vi.mocked(cp.spawn).mockImplementation(
+        () => createMockChildProcess(0, true) as any,
+      );
+
+      const modes = await getAvailableModes();
+
+      expect(modes.sdk).toBe(true);
+      expect(modes.cli).toBe(true);
+      expect(modes.recommended).toBe('sdk');
+      expect(modes.reason).toContain('Both modes available');
     });
 
     it('should recommend cli when no API key but CLI available', async () => {
       delete process.env.ANTHROPIC_API_KEY;
+      const cp = await import('node:child_process');
+      vi.mocked(cp.spawn).mockImplementation(
+        () => createMockChildProcess(0, true) as any,
+      );
 
-      // Mock isCLIAvailable for this test
       const modes = await getAvailableModes();
 
       expect(modes.sdk).toBe(false);
-      // If CLI is available, it should be recommended
-      if (modes.cli) {
-        expect(modes.recommended).toBe('cli');
-        expect(modes.reason).toContain('Only CLI mode available');
-      }
+      expect(modes.cli).toBe(true);
+      expect(modes.recommended).toBe('cli');
+      expect(modes.reason).toContain('Only CLI mode available');
     });
   });
 });

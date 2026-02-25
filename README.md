@@ -118,6 +118,27 @@ TrafficControl requires Slack integration for agent-human communication. For det
 
 For troubleshooting, security best practices, and advanced configuration options, refer to the [detailed setup guide](docs/SLACK_SETUP.md).
 
+## Relay Module
+
+The Slack Claude Relay bridges Slack messages to Claude Code CLI sessions. Send a message in a Slack channel and the relay spawns a Claude Code process against a local project directory, streaming progress and results back to the thread.
+
+Key features:
+- **Channel-to-project mapping** — each Slack channel is linked to a project directory
+- **Conversation continuity** — follow-up messages in the same thread resume the Claude session
+- **Fuzzy project matching** — type a project name instead of a full path (requires `RELAY_PROJECTS_DIR`)
+- **Progress streaming** — see what Claude is doing (reading files, running commands) in real time
+
+Add these optional variables to your `.env`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RELAY_MODEL` | `sonnet` | Model to use: `sonnet` or `opus` |
+| `RELAY_CLI_PATH` | `claude` | Path to Claude Code CLI |
+| `RELAY_PROJECTS_DIR` | _(not set)_ | Base directory for fuzzy project name matching |
+| `RELAY_TIMEOUT_MS` | `600000` | CLI timeout in milliseconds (10 min default) |
+
+For full setup instructions, commands, and troubleshooting, see [docs/RELAY_SETUP.md](docs/RELAY_SETUP.md).
+
 ## Database Setup
 
 TrafficControl uses Supabase (PostgreSQL). Core tables (all prefixed with `tc_`):
@@ -238,6 +259,10 @@ traffic-control/
 ├── CAPABILITIES.md           # Tools & skills reference
 └── traffic-control-initial-spec.md         # Core philosophy
 ```
+
+## Operations & Monitoring
+
+For health monitoring queries, expected log patterns, common failure modes, and remediation steps, see the **[Operations Guide](docs/OPERATIONS.md)**.
 
 ## How It Works
 

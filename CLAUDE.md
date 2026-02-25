@@ -129,8 +129,8 @@ TrafficControl is an orchestration system for managing multiple Claude Code agen
 
 Currently TrafficControl can be interacted with via:
 - **Slack** - Primary interface for notifications, questions, and commands
+- **Slack Claude Relay** - Bridge Slack messages to Claude Code CLI sessions (see [docs/RELAY_SETUP.md](docs/RELAY_SETUP.md))
 - **Supabase MCP** - Direct database queries from Claude Code sessions
-- **CLI** (planned) - Terminal interface for Claude Code sessions
 
 ## Project Structure
 
