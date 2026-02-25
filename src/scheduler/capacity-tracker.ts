@@ -90,9 +90,6 @@ export class CapacityTracker {
         recommendedSonnetMax: 5,
       });
 
-      // Also log to console directly for visibility during startup
-      console.warn(`\n[TrafficControl] ${warningMessage}\n`);
-
       return warningMessage;
     }
 

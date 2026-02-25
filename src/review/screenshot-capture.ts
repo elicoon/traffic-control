@@ -1,6 +1,9 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { chromium, Browser, Page } from 'playwright';
+import { logger } from '../logging/index.js';
+
+const log = logger.child('ScreenshotCapture');
 
 export interface ScreenshotConfig {
   url: string;
@@ -121,7 +124,7 @@ export class ScreenshotCapture {
       return deletedCount;
     } catch (error) {
       // Log error but don't throw - cleanup is not critical
-      console.error('Error during screenshot cleanup:', error);
+      log.error('Error during screenshot cleanup', error instanceof Error ? error : new Error(String(error)));
       return 0;
     }
   }
