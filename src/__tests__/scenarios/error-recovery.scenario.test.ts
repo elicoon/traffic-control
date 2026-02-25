@@ -228,7 +228,7 @@ describe('Scenario: Database outage during tick', () => {
 
     const dbHealthMonitor = mainLoop.getDatabaseHealthMonitor();
     const degradedEvents: unknown[] = [];
-    eventBus.on('database:degraded', (event) => degradedEvents.push(event));
+    eventBus.on('database:degraded', (event) => { degradedEvents.push(event); });
 
     // Simulate 3 consecutive DB failures to trigger degraded mode
     const dbError = new Error('Database connection timeout');
@@ -254,7 +254,7 @@ describe('Scenario: Database outage during tick', () => {
 
     const dbHealthMonitor = mainLoop.getDatabaseHealthMonitor();
     const recoveredEvents: unknown[] = [];
-    eventBus.on('database:recovered', (event) => recoveredEvents.push(event));
+    eventBus.on('database:recovered', (event) => { recoveredEvents.push(event); });
 
     // Enter degraded mode
     const dbError = new Error('Database connection timeout');
@@ -313,9 +313,9 @@ describe('Scenario: Database outage during tick', () => {
     const dbHealthMonitor = mainLoop.getDatabaseHealthMonitor();
     const eventSequence: string[] = [];
 
-    eventBus.on('database:healthy', () => eventSequence.push('healthy'));
-    eventBus.on('database:degraded', () => eventSequence.push('degraded'));
-    eventBus.on('database:recovered', () => eventSequence.push('recovered'));
+    eventBus.on('database:healthy', () => { eventSequence.push('healthy'); });
+    eventBus.on('database:degraded', () => { eventSequence.push('degraded'); });
+    eventBus.on('database:recovered', () => { eventSequence.push('recovered'); });
 
     // Record initial healthy state
     dbHealthMonitor.recordStartupHealthy(10);
