@@ -224,6 +224,14 @@ export class StateManager {
         log.debug('No existing state file found', { path: this.config.stateFilePath });
         return false;
       }
+      if (error instanceof SyntaxError) {
+        log.warn('Corrupt state file detected, starting fresh', {
+          path: this.config.stateFilePath,
+          error: error.message,
+        });
+        this.state = this.createInitialState();
+        return false;
+      }
       log.error('Failed to load state', error instanceof Error ? error : new Error(String(error)), {
         path: this.config.stateFilePath,
       });
