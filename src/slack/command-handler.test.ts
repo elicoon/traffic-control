@@ -243,6 +243,87 @@ describe('SlackCommandHandler', () => {
     });
   });
 
+  describe('dnd validation', () => {
+    it('should reject duration exceeding 24 hours', async () => {
+      const result = await handler.handleCommand('dnd', ['25h'], 'user-1');
+
+      expect(mockDeps.setDnd).not.toHaveBeenCalled();
+      expect(result).toContain('between 1 minute and 24 hours');
+    });
+
+    it('should reject duration shorter than 1 minute', async () => {
+      // "0" is parsed as 0 minutes = 0ms, which is below the 1-minute minimum
+      const result = await handler.handleCommand('dnd', ['0'], 'user-1');
+
+      expect(mockDeps.setDnd).not.toHaveBeenCalled();
+      expect(result).toContain('between 1 minute and 24 hours');
+    });
+
+    it('should reject negative duration', async () => {
+      const result = await handler.handleCommand('dnd', ['-30m'], 'user-1');
+
+      expect(mockDeps.setDnd).not.toHaveBeenCalled();
+      expect(result).toContain('Invalid duration');
+    });
+
+    it('should reject non-numeric duration', async () => {
+      const result = await handler.handleCommand('dnd', ['abc'], 'user-1');
+
+      expect(mockDeps.setDnd).not.toHaveBeenCalled();
+      expect(result).toContain('Invalid duration');
+    });
+
+    it('should accept valid duration within bounds', async () => {
+      const result = await handler.handleCommand('dnd', ['2h'], 'user-1');
+
+      expect(mockDeps.setDnd).toHaveBeenCalledWith(2 * 60 * 60 * 1000);
+      expect(result).toContain('Do Not Disturb enabled');
+    });
+
+    it('should accept exactly 24 hours', async () => {
+      const result = await handler.handleCommand('dnd', ['24h'], 'user-1');
+
+      expect(mockDeps.setDnd).toHaveBeenCalledWith(24 * 60 * 60 * 1000);
+      expect(result).toContain('Do Not Disturb enabled');
+    });
+
+    it('should accept exactly 1 minute', async () => {
+      const result = await handler.handleCommand('dnd', ['1m'], 'user-1');
+
+      expect(mockDeps.setDnd).toHaveBeenCalledWith(60 * 1000);
+      expect(result).toContain('Do Not Disturb enabled');
+    });
+
+    it('should still allow dnd off when validation is active', async () => {
+      const result = await handler.handleCommand('dnd', ['off'], 'user-1');
+
+      expect(mockDeps.disableDnd).toHaveBeenCalled();
+      expect(result).toContain('disabled');
+    });
+  });
+
+  describe('validateDndDuration', () => {
+    it('should return null for valid duration', () => {
+      expect(SlackCommandHandler.validateDndDuration(30 * 60 * 1000)).toBeNull();
+    });
+
+    it('should return error for duration below minimum', () => {
+      expect(SlackCommandHandler.validateDndDuration(30 * 1000)).toContain('between 1 minute and 24 hours');
+    });
+
+    it('should return error for duration above maximum', () => {
+      expect(SlackCommandHandler.validateDndDuration(25 * 60 * 60 * 1000)).toContain('between 1 minute and 24 hours');
+    });
+
+    it('should return null for exact minimum (1 minute)', () => {
+      expect(SlackCommandHandler.validateDndDuration(60 * 1000)).toBeNull();
+    });
+
+    it('should return null for exact maximum (24 hours)', () => {
+      expect(SlackCommandHandler.validateDndDuration(24 * 60 * 60 * 1000)).toBeNull();
+    });
+  });
+
   describe('help command', () => {
     it('should return help text', async () => {
       const result = await handler.handleCommand('help', [], 'user-1');

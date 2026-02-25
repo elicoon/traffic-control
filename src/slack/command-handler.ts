@@ -276,9 +276,18 @@ export class SlackCommandHandler {
 
     if (args.length > 0) {
       const parsed = SlackCommandHandler.parseDuration(args[0]);
-      if (parsed !== null) {
-        durationMs = parsed;
+      if (parsed === null) {
+        log.warn('Invalid DND duration input', { input: args[0] });
+        return `Invalid duration: "${args[0]}". Use formats like \`30m\`, \`2h\`, or \`45\` (minutes).`;
       }
+      durationMs = parsed;
+    }
+
+    // Validate duration bounds
+    const validationError = SlackCommandHandler.validateDndDuration(durationMs);
+    if (validationError) {
+      log.warn('DND duration out of bounds', { durationMs });
+      return validationError;
     }
 
     log.info('Enabling Do Not Disturb via command', { durationMs });
@@ -312,6 +321,22 @@ export class SlackCommandHandler {
 *Duration formats*: \`30m\`, \`2h\`, \`45\` (minutes)
 
 Use \`/tc <command>\` to run any command.`;
+  }
+
+  /** Minimum DND duration: 1 minute */
+  static readonly DND_MIN_MS = 60 * 1000;
+  /** Maximum DND duration: 24 hours */
+  static readonly DND_MAX_MS = 24 * 60 * 60 * 1000;
+
+  /**
+   * Validates that a DND duration is within acceptable bounds.
+   * Returns an error message string if invalid, or null if valid.
+   */
+  static validateDndDuration(durationMs: number): string | null {
+    if (durationMs < SlackCommandHandler.DND_MIN_MS || durationMs > SlackCommandHandler.DND_MAX_MS) {
+      return 'Duration must be between 1 minute and 24 hours.';
+    }
+    return null;
   }
 
   /**
