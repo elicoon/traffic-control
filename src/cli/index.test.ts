@@ -205,6 +205,226 @@ describe('parseArgs', () => {
 
     expect(parsed.command).toBeUndefined();
   });
+
+  describe('malformed options', () => {
+    it('should treat --=value as an option named "=value" (boolean)', () => {
+      const result = parseArgs(['start', '--=value']);
+      expect(result.command).toBe('start');
+      expect(result.options['=value']).toBe(true);
+    });
+
+    it('should treat ---flag as an option named "-flag" (boolean)', () => {
+      const result = parseArgs(['start', '---flag']);
+      expect(result.options['-flag']).toBe(true);
+    });
+
+    it('should treat bare -- as an option with empty string name', () => {
+      const result = parseArgs(['start', '--']);
+      expect(result.options['']).toBe(true);
+    });
+
+    it('should treat -- followed by a non-dash arg as option "" with value', () => {
+      const result = parseArgs(['start', '--', 'some-arg']);
+      expect(result.options['']).toBe('some-arg');
+    });
+
+    it('should handle empty string arguments as command', () => {
+      const result = parseArgs(['']);
+      expect(result.command).toBe('');
+    });
+
+    it('should handle --option with empty string value', () => {
+      // Empty string is falsy in JS, so `nextArg && ...` short-circuits.
+      // The parser treats this as a boolean flag, not a value assignment.
+      const result = parseArgs(['start', '--config', '']);
+      expect(result.options['config']).toBe(true);
+      // The empty string falls through as a positional arg (not consumed as option value)
+      expect(result.args).toEqual(['']);
+    });
+  });
+
+  describe('unknown and invalid command names', () => {
+    it('should accept unknown commands without validation', () => {
+      const result = parseArgs(['banana']);
+      expect(result.command).toBe('banana');
+      expect(result.subcommand).toBeUndefined();
+    });
+
+    it('should accept commands with special characters', () => {
+      const result = parseArgs(['!!!']);
+      expect(result.command).toBe('!!!');
+    });
+
+    it('should accept commands with numbers', () => {
+      const result = parseArgs(['123']);
+      expect(result.command).toBe('123');
+    });
+
+    it('should not assign subcommand for unknown commands', () => {
+      const result = parseArgs(['banana', 'split']);
+      expect(result.command).toBe('banana');
+      expect(result.subcommand).toBeUndefined();
+      expect(result.args).toEqual(['split']);
+    });
+
+    it('should accept commands with unicode characters', () => {
+      const result = parseArgs(['café']);
+      expect(result.command).toBe('café');
+    });
+  });
+
+  describe('duplicate options', () => {
+    it('should use last value when same option specified twice (last-wins)', () => {
+      const result = parseArgs(['start', '--config', 'a.json', '--config', 'b.json']);
+      expect(result.options['config']).toBe('b.json');
+    });
+
+    it('should use last value for boolean then value duplicate', () => {
+      const result = parseArgs(['start', '--verbose', '--verbose', 'extra']);
+      expect(result.options['verbose']).toBe('extra');
+    });
+
+    it('should use last value for value then boolean duplicate', () => {
+      const result = parseArgs(['start', '--format', 'json', '--format']);
+      expect(result.options['format']).toBe(true);
+    });
+  });
+
+  describe('missing required arguments', () => {
+    it('should parse command without subcommand for subcommand-supporting commands', () => {
+      const result = parseArgs(['task']);
+      expect(result.command).toBe('task');
+      expect(result.subcommand).toBeUndefined();
+      expect(result.args).toEqual([]);
+    });
+
+    it('should parse project command without subcommand', () => {
+      const result = parseArgs(['project']);
+      expect(result.command).toBe('project');
+      expect(result.subcommand).toBeUndefined();
+    });
+
+    it('should parse subcommand without additional arguments', () => {
+      const result = parseArgs(['task', 'add']);
+      expect(result.command).toBe('task');
+      expect(result.subcommand).toBe('add');
+      expect(result.args).toEqual([]);
+    });
+
+    it('should parse with no arguments at all', () => {
+      const result = parseArgs([]);
+      expect(result.command).toBeUndefined();
+      expect(result.subcommand).toBeUndefined();
+      expect(result.args).toEqual([]);
+      expect(result.options).toEqual({});
+    });
+  });
+
+  describe('boundary inputs', () => {
+    it('should handle very long argument strings', () => {
+      const longValue = 'x'.repeat(1000);
+      const result = parseArgs(['start', '--config', longValue]);
+      expect(result.options['config']).toBe(longValue);
+    });
+
+    it('should handle very long command names', () => {
+      const longCommand = 'cmd'.repeat(500);
+      const result = parseArgs([longCommand]);
+      expect(result.command).toBe(longCommand);
+    });
+
+    it('should handle special characters in option values', () => {
+      const result = parseArgs(['start', '--path', '/tmp/file with spaces/config.json']);
+      expect(result.options['path']).toBe('/tmp/file with spaces/config.json');
+    });
+
+    it('should handle values containing equals signs', () => {
+      const result = parseArgs(['start', '--env', 'KEY=VALUE']);
+      expect(result.options['env']).toBe('KEY=VALUE');
+    });
+
+    it('should handle values containing quotes', () => {
+      const result = parseArgs(['task', 'add', "it's broken"]);
+      expect(result.args).toEqual(["it's broken"]);
+    });
+
+    it('should handle numeric string values without coercion', () => {
+      const result = parseArgs(['start', '--port', '8080']);
+      expect(result.options['port']).toBe('8080');
+      expect(typeof result.options['port']).toBe('string');
+    });
+  });
+
+  describe('option and argument ordering', () => {
+    it('should consume command name as option value when option precedes command', () => {
+      const result = parseArgs(['--verbose', 'start']);
+      expect(result.options['verbose']).toBe('start');
+      expect(result.command).toBeUndefined();
+    });
+
+    it('should consume subcommand as option value when option is between command and subcommand', () => {
+      const result = parseArgs(['task', '--verbose', 'add']);
+      expect(result.options['verbose']).toBe('add');
+      expect(result.subcommand).toBeUndefined();
+    });
+
+    it('should not consume next argument for short flags', () => {
+      const result = parseArgs(['-v', 'start']);
+      expect(result.options['v']).toBe(true);
+      expect(result.command).toBe('start');
+    });
+
+    it('should handle multiple consecutive boolean long options', () => {
+      const result = parseArgs(['start', '--verbose', '--debug', '--dry-run']);
+      expect(result.options['verbose']).toBe(true);
+      expect(result.options['debug']).toBe(true);
+      expect(result.options['dry-run']).toBe(true);
+    });
+
+    it('should handle intermixed short and long flags', () => {
+      const result = parseArgs(['start', '-v', '--debug', '-h']);
+      expect(result.options['v']).toBe(true);
+      expect(result.options['debug']).toBe(true);
+      expect(result.options['h']).toBe(true);
+    });
+  });
+
+  describe('short flag edge cases', () => {
+    it('should treat combined short flags as single option name', () => {
+      const result = parseArgs(['-hv']);
+      expect(result.options['hv']).toBe(true);
+      expect(result.options['h']).toBeUndefined();
+      expect(result.options['v']).toBeUndefined();
+    });
+
+    it('should treat single dash alone as a short flag with empty name', () => {
+      const result = parseArgs(['-']);
+      expect(result.options['']).toBe(true);
+    });
+  });
+
+  describe('subcommand gating by command name', () => {
+    const subcommandCommands = ['task', 'project', 'config', 'agent', 'backlog', 'proposal'];
+
+    subcommandCommands.forEach((cmd) => {
+      it(`should allow subcommand for "${cmd}" command`, () => {
+        const result = parseArgs([cmd, 'list']);
+        expect(result.command).toBe(cmd);
+        expect(result.subcommand).toBe('list');
+      });
+    });
+
+    const nonSubcommandCommands = ['start', 'stop', 'status', 'report', 'unknown'];
+
+    nonSubcommandCommands.forEach((cmd) => {
+      it(`should NOT allow subcommand for "${cmd}" command`, () => {
+        const result = parseArgs([cmd, 'extra']);
+        expect(result.command).toBe(cmd);
+        expect(result.subcommand).toBeUndefined();
+        expect(result.args).toEqual(['extra']);
+      });
+    });
+  });
 });
 
 describe('formatOutput', () => {
