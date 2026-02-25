@@ -52,6 +52,53 @@ interface PatternHandler {
   handler: (event: TypedEvent<EventType, unknown>) => void | Promise<void>;
 }
 
+/**
+ * Fixed-capacity circular buffer with O(1) push and O(n) toArray.
+ * Replaces the previous array + shift() approach which was O(n) per push
+ * when the buffer was full.
+ */
+class CircularBuffer<T> {
+  private buffer: (T | undefined)[];
+  private head: number = 0;  // next write position
+  private count: number = 0;
+  private readonly capacity: number;
+
+  constructor(capacity: number) {
+    this.capacity = Math.max(capacity, 1);
+    this.buffer = new Array(this.capacity);
+  }
+
+  push(item: T): void {
+    this.buffer[this.head] = item;
+    this.head = (this.head + 1) % this.capacity;
+    if (this.count < this.capacity) {
+      this.count++;
+    }
+  }
+
+  /** Return items in chronological order (oldest first). */
+  toArray(): T[] {
+    if (this.count === 0) return [];
+    const result = new Array<T>(this.count);
+    // start = oldest element position
+    const start = this.count < this.capacity ? 0 : this.head;
+    for (let i = 0; i < this.count; i++) {
+      result[i] = this.buffer[(start + i) % this.capacity] as T;
+    }
+    return result;
+  }
+
+  clear(): void {
+    this.buffer = new Array(this.capacity);
+    this.head = 0;
+    this.count = 0;
+  }
+
+  get length(): number {
+    return this.count;
+  }
+}
+
 // ============================================================================
 // EventBus Class
 // ============================================================================
@@ -84,14 +131,14 @@ export class EventBus {
   private config: Required<EventBusConfig>;
   private handlers: Map<EventType, Set<InternalHandler>>;
   private patternHandlers: Set<PatternHandler>;
-  private history: TypedEvent<EventType, unknown>[];
+  private history: CircularBuffer<TypedEvent<EventType, unknown>>;
   private emittingError: boolean = false;
 
   constructor(config: EventBusConfig = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.handlers = new Map();
     this.patternHandlers = new Set();
-    this.history = [];
+    this.history = new CircularBuffer(this.config.historySize);
   }
 
   // ==========================================================================
@@ -321,7 +368,7 @@ export class EventBus {
    * @returns Array of events matching the filter
    */
   getHistory(filter?: EventFilter): TypedEvent<EventType, unknown>[] {
-    let result = [...this.history];
+    let result = this.history.toArray();
 
     if (filter) {
       if (filter.types && filter.types.length > 0) {
@@ -357,7 +404,7 @@ export class EventBus {
    * Clear all event history
    */
   clearHistory(): void {
-    this.history = [];
+    this.history.clear();
   }
 
   // ==========================================================================
@@ -381,11 +428,6 @@ export class EventBus {
    */
   private addToHistory(event: TypedEvent<EventType, unknown>): void {
     this.history.push(event);
-
-    // Trim history if over limit
-    while (this.history.length > this.config.historySize) {
-      this.history.shift();
-    }
   }
 
   /**

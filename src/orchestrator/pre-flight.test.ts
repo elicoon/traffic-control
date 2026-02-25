@@ -621,13 +621,15 @@ describe('PreFlightChecker', () => {
         createMockTask({ title: 'Test task', priority_confirmed: false }),
       ]);
 
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       await checker.dryRun();
 
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Warnings:'));
+      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('Warnings:'));
 
-      consoleSpy.mockRestore();
+      consoleLogSpy.mockRestore();
+      consoleWarnSpy.mockRestore();
     });
   });
 

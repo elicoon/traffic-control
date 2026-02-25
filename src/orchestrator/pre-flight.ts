@@ -541,50 +541,50 @@ export class PreFlightChecker {
     log.info('Executing pre-flight checks in dry-run mode');
     const result = await this.runChecks();
 
-    // Print summary to console in dry-run mode
-    console.log('\n' + '='.repeat(60));
-    console.log('PRE-FLIGHT CHECK RESULTS (DRY RUN)');
-    console.log('='.repeat(60));
-    console.log(`\nTimestamp: ${result.timestamp.toISOString()}`);
-    console.log(`Status: ${result.passed ? 'PASSED' : 'FAILED'}`);
-    console.log(`\nQueued Tasks: ${result.queuedTaskCount}`);
-    console.log(`Test Data Detected: ${result.testDataDetected}`);
-    console.log(`Unconfirmed Priorities: ${result.unconfirmedPriorityCount}`);
-    console.log(`\nCapacity Limits:`);
-    console.log(`  Opus: ${result.capacityLimits.opus}`);
-    console.log(`  Sonnet: ${result.capacityLimits.sonnet}`);
+    // Print summary using structured logger in dry-run mode
+    log.info('='.repeat(60));
+    log.info('PRE-FLIGHT CHECK RESULTS (DRY RUN)');
+    log.info('='.repeat(60));
+    log.info(`Timestamp: ${result.timestamp.toISOString()}`, { timestamp: result.timestamp.toISOString() });
+    log.info(`Status: ${result.passed ? 'PASSED' : 'FAILED'}`, { passed: result.passed });
+    log.info(`Queued Tasks: ${result.queuedTaskCount}`, { taskCount: result.queuedTaskCount });
+    log.info(`Test Data Detected: ${result.testDataDetected}`, { testDataDetected: result.testDataDetected });
+    log.info(`Unconfirmed Priorities: ${result.unconfirmedPriorityCount}`, { unconfirmedCount: result.unconfirmedPriorityCount });
+    log.info('Capacity Limits:', { opus: result.capacityLimits.opus, sonnet: result.capacityLimits.sonnet });
+    log.info(`  Opus: ${result.capacityLimits.opus}`, { model: 'opus', limit: result.capacityLimits.opus });
+    log.info(`  Sonnet: ${result.capacityLimits.sonnet}`, { model: 'sonnet', limit: result.capacityLimits.sonnet });
 
     if (result.costEstimate) {
-      console.log(`\nEstimated Cost: $${result.costEstimate.totalCost.toFixed(2)}`);
+      log.info(`Estimated Cost: $${result.costEstimate.totalCost.toFixed(2)}`, { totalCost: result.costEstimate.totalCost });
       for (const item of result.costEstimate.breakdown) {
-        console.log(`  ${item.model}: $${item.cost.toFixed(2)} (${item.sessions} sessions)`);
+        log.info(`  ${item.model}: $${item.cost.toFixed(2)} (${item.sessions} sessions)`, { model: item.model, cost: item.cost, sessions: item.sessions });
       }
     }
 
     if (result.warnings.length > 0) {
-      console.log('\nWarnings:');
+      log.warn('Warnings:', { warningCount: result.warnings.length });
       for (const warning of result.warnings) {
-        console.log(`  [${warning.severity.toUpperCase()}] ${warning.message}`);
+        log.warn(`  [${warning.severity.toUpperCase()}] ${warning.message}`, { severity: warning.severity, type: warning.type, taskIds: warning.taskIds });
       }
     }
 
     if (result.tasks.length > 0) {
-      console.log('\nTask Queue (top 10):');
+      log.info('Task Queue (top 10):', { totalTasks: result.tasks.length });
       for (const task of result.tasks.slice(0, 10)) {
         const flags: string[] = [];
         if (task.isTestData) flags.push('TEST');
         if (!task.priorityConfirmed) flags.push('UNCONFIRMED');
         const flagStr = flags.length > 0 ? ` [${flags.join(', ')}]` : '';
-        console.log(`  ${task.priority}. ${task.title}${flagStr}`);
+        log.info(`  ${task.priority}. ${task.title}${flagStr}`, { taskId: task.id, priority: task.priority, isTestData: task.isTestData, priorityConfirmed: task.priorityConfirmed });
       }
       if (result.tasks.length > 10) {
-        console.log(`  ...and ${result.tasks.length - 10} more`);
+        log.info(`  ...and ${result.tasks.length - 10} more`, { remainingTasks: result.tasks.length - 10 });
       }
     }
 
-    console.log('\n' + '='.repeat(60));
-    console.log('DRY RUN COMPLETE - No changes made, orchestrator not started');
-    console.log('='.repeat(60) + '\n');
+    log.info('='.repeat(60));
+    log.info('DRY RUN COMPLETE - No changes made, orchestrator not started');
+    log.info('='.repeat(60));
 
     return result;
   }
