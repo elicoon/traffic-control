@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Reporter, ReporterConfig } from './reporter.js';
+import { sendMessage } from '../slack/bot.js';
 
 // Mock the Supabase client
 const mockSupabaseClient = {
@@ -193,6 +194,35 @@ describe('Reporter', () => {
   });
 
   describe('report generation', () => {
+    it('should call metricsCollector methods directly (collectMetrics body)', async () => {
+      const tenAM = new Date('2025-01-26T10:00:00');
+      vi.setSystemTime(tenAM);
+
+      // Spy on the internal metricsCollector methods — does NOT mock collectMetrics itself,
+      // so lines 221-224 in reporter.ts execute.
+      vi.spyOn((reporter as any).metricsCollector, 'collectAllProjectMetrics')
+        .mockResolvedValue([]);
+      vi.spyOn((reporter as any).metricsCollector, 'collectSystemMetrics')
+        .mockResolvedValue({
+          totalProjects: 0,
+          totalTasksQueued: 0,
+          totalTasksInProgress: 0,
+          totalTasksBlocked: 0,
+          totalTasksCompletedToday: 0,
+          totalTasksCompletedThisWeek: 0,
+          totalTokensOpus: 0,
+          totalTokensSonnet: 0,
+          totalSessions: 0,
+          opusUtilization: 0,
+          sonnetUtilization: 0
+        });
+
+      const report = await reporter.generateReport();
+
+      expect(report.metrics.projectMetrics).toEqual([]);
+      expect(report.metrics.systemMetrics.totalProjects).toBe(0);
+    });
+
     it('should generate report with metrics and recommendations', async () => {
       const tenAM = new Date('2025-01-26T10:00:00');
       vi.setSystemTime(tenAM);
@@ -235,6 +265,40 @@ describe('Reporter', () => {
       expect(report.metrics).toBeDefined();
       expect(report.recommendations).toBeDefined();
       expect(report.timestamp).toBeDefined();
+    });
+  });
+
+  describe('error handling', () => {
+    it('should return error result when sendMessage throws', async () => {
+      const tenAM = new Date('2025-01-26T10:00:00');
+      vi.setSystemTime(tenAM);
+
+      // Mock metrics so we reach the sendMessage call
+      vi.spyOn(reporter as any, 'collectMetrics').mockResolvedValue({
+        projectMetrics: [],
+        systemMetrics: {
+          totalProjects: 0,
+          totalTasksQueued: 0,
+          totalTasksInProgress: 0,
+          totalTasksBlocked: 0,
+          totalTasksCompletedToday: 0,
+          totalTasksCompletedThisWeek: 0,
+          totalTokensOpus: 0,
+          totalTokensSonnet: 0,
+          totalSessions: 0,
+          opusUtilization: 0,
+          sonnetUtilization: 0
+        }
+      });
+
+      // Make sendMessage throw for this one call
+      vi.mocked(sendMessage).mockRejectedValueOnce(new Error('Slack API error'));
+
+      const result = await reporter.sendImmediateReport();
+
+      expect(result.sent).toBe(false);
+      expect(result.reason).toBe('error');
+      expect(result.error).toContain('Slack API error');
     });
   });
 

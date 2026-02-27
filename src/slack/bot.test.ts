@@ -354,6 +354,45 @@ describe('Slack Bot', () => {
       expect(report).not.toContain('Recommendations');
       expect(report).not.toContain('Action Items');
     });
+
+    it('should include warnings section when warning recommendations exist', () => {
+      const recommendationsWithWarnings: RecommendationData = {
+        projectRecommendations: new Map(),
+        systemRecommendations: [
+          {
+            type: 'high_utilization',
+            message: 'Opus utilization approaching limit',
+            priority: 'warning' as const
+          }
+        ],
+        actionItems: []
+      };
+      const report = formatStatusReport(sampleMetrics, recommendationsWithWarnings);
+      expect(report).toContain('_Warnings:_');
+      expect(report).toContain('[~] Opus utilization approaching limit');
+    });
+
+    it('should show overflow message when more than 5 action items exist', () => {
+      const manyActionItems: RecommendationData = {
+        projectRecommendations: new Map(),
+        systemRecommendations: [],
+        actionItems: [
+          'Action item 1',
+          'Action item 2',
+          'Action item 3',
+          'Action item 4',
+          'Action item 5',
+          'Action item 6',
+          'Action item 7'
+        ]
+      };
+      const report = formatStatusReport(sampleMetrics, manyActionItems);
+      expect(report).toContain('Action Items');
+      expect(report).toContain('1. Action item 1');
+      expect(report).toContain('5. Action item 5');
+      expect(report).not.toContain('6. Action item 6');
+      expect(report).toContain('_...and 2 more_');
+    });
   });
 
   describe('Retry Logic', () => {
