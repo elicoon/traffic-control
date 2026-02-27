@@ -495,6 +495,31 @@ describe('CostTracker', () => {
       expect(estimate.sonnetCost).toBeCloseTo(1.5, 2);
       expect(estimate.totalCost).toBeCloseTo(4.5, 2);
     });
+
+    it('should estimate haiku cost when haikuSessions provided (lines 381-390)', async () => {
+      const pricingData = [
+        {
+          id: 'pricing-haiku',
+          model: 'haiku',
+          input_price_per_million: '0.250000',
+          output_price_per_million: '1.250000',
+          effective_from: '2026-01-01T00:00:00Z',
+          effective_until: null,
+        },
+      ];
+
+      mockClient.setSelectResult(pricingData);
+
+      const estimate = await tracker.estimateCost({
+        haikuSessions: 4,
+        avgInputTokensPerSession: 50000,
+        avgOutputTokensPerSession: 10000,
+      });
+
+      // Haiku: 4 sessions * (50K * 0.25/1M + 10K * 1.25/1M) = 4 * (0.0125 + 0.0125) = 0.10
+      expect(estimate.haikuCost).toBeCloseTo(0.1, 2);
+      expect(estimate.totalCost).toBeCloseTo(0.1, 2);
+    });
   });
 
   describe('fallback pricing', () => {

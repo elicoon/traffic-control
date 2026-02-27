@@ -6,6 +6,7 @@ import {
   calculateCostFromTokens,
   getSDKAdapter,
   resetSDKAdapter,
+  createMockSDKAdapter,
   type TokenUsage,
   type SDKAdapterConfig,
   type ActiveQuery,
@@ -611,4 +612,50 @@ describe('SDKAdapter', () => {
       expect(adapter1).not.toBe(adapter2);
     });
   });
+
+  describe('mapToAgentEvent - assistant message with no tool_use', () => {
+    it('should return null for assistant message with only text content', () => {
+      const adapter = new SDKAdapter();
+      const message: SDKAssistantMessage = {
+        type: 'assistant',
+        message: {
+          id: 'msg-text-only',
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'I am thinking about this...' }],
+          model: 'claude-sonnet-4-6',
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 5 },
+        },
+      } as unknown as SDKAssistantMessage;
+
+      const event = adapter.mapToAgentEvent(message, 'session-text');
+      expect(event).toBeNull();
+    });
+
+    it('should return null for assistant message with empty content', () => {
+      const adapter = new SDKAdapter();
+      const message: SDKAssistantMessage = {
+        type: 'assistant',
+        message: {
+          id: 'msg-empty',
+          type: 'message',
+          role: 'assistant',
+          content: [],
+          model: 'claude-sonnet-4-6',
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 5, output_tokens: 0 },
+        },
+      } as unknown as SDKAssistantMessage;
+
+      const event = adapter.mapToAgentEvent(message, 'session-empty');
+      expect(event).toBeNull();
+    });
+  });
+
+  // Note: createMockSDKAdapter (lines 437-459) uses require('vitest') which
+  // fails in the ESM context — those lines cannot be covered by unit tests
+  // without modifying production code.
 });

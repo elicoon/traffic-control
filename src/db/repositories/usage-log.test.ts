@@ -459,9 +459,24 @@ describe('UsageLogRepository', () => {
         cutoffDate.toISOString()
       );
     });
+
+    it('should throw when delete returns an error (lines 263-264)', async () => {
+      mockClient.setDeleteResult([], { message: 'delete failed' });
+
+      const cutoffDate = new Date('2024-01-01');
+      await expect(repo.deleteOlderThan(cutoffDate)).rejects.toThrow('Failed to delete old usage logs');
+    });
   });
 
   describe('getDailySummary', () => {
+    it('should throw when query returns an error (lines 289-290)', async () => {
+      mockClient.setSelectResult(null, { message: 'query failed' });
+
+      const startDate = new Date('2024-01-01');
+      const endDate = new Date('2024-01-03');
+      await expect(repo.getDailySummary(startDate, endDate)).rejects.toThrow('Failed to get daily summary');
+    });
+
     it('should group usage by day', async () => {
       const logs: UsageLog[] = [
         {

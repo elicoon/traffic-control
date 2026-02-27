@@ -220,6 +220,11 @@ describe('Slack Bot', () => {
       expect(message).toContain('Add authentication');
     });
 
+    it('should return no-proposals message when approved array is empty', () => {
+      const message = formatProposalApproved([]);
+      expect(message).toBe('No proposals were approved.');
+    });
+
     it('should format rejection confirmation', () => {
       const message = formatProposalRejected(sampleProposal, 'Not a priority right now');
       expect(message).toContain('Rejected');
@@ -233,6 +238,12 @@ describe('Slack Bot', () => {
       expect(message).toContain('3');
       expect(message).toContain('5');
       expect(message).toContain('2');
+    });
+
+    it('should format backlog alert with no pending proposals (else branch)', () => {
+      const message = formatBacklogAlert(2, 5, 0);
+      expect(message).toContain('Backlog Running Low');
+      expect(message).toContain('Generating new proposals');
     });
   });
 
