@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { BacklogManager } from './backlog-manager.js';
 import { TaskRepository } from '../db/repositories/tasks.js';
-import { ProjectRepository } from '../db/repositories/projects.js';
+import { ProjectRepository, Project } from '../db/repositories/projects.js';
 import { ProposalRepository } from '../db/repositories/proposals.js';
 import { createSupabaseClient } from '../db/client.js';
 
@@ -11,6 +11,7 @@ describe('BacklogManager', () => {
   let projectRepo: ProjectRepository;
   let proposalRepo: ProposalRepository;
   let testProjectId: string;
+  let testProject: Project;
   let testTaskIds: string[] = [];
   let initialQueuedCount: number = 0;
 
@@ -27,6 +28,7 @@ describe('BacklogManager', () => {
     // Create a test project
     const project = await projectRepo.create({ name: 'Backlog Test Project' });
     testProjectId = project.id;
+    testProject = project;
   });
 
   beforeEach(() => {
@@ -108,11 +110,19 @@ describe('BacklogManager', () => {
   });
 
   describe('getBacklogStats', () => {
+    beforeEach(() => {
+      vi.spyOn(projectRepo, 'listActive').mockResolvedValueOnce([testProject]);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
     it('should return stats for all active projects', async () => {
       const stats = await backlogManager.getBacklogStats();
       expect(stats).toBeDefined();
       expect(Array.isArray(stats)).toBe(true);
-    }, 15000);
+    });
 
     it('should include queued task count per project', async () => {
       const stats = await backlogManager.getBacklogStats();
@@ -120,7 +130,7 @@ describe('BacklogManager', () => {
 
       expect(testProjectStats).toBeDefined();
       expect(testProjectStats?.queuedCount).toBeGreaterThan(0);
-    }, 15000);
+    });
   });
 
   describe('getBacklogDepth', () => {
@@ -176,6 +186,14 @@ describe('BacklogManager', () => {
   });
 
   describe('getSummary', () => {
+    beforeEach(() => {
+      vi.spyOn(projectRepo, 'listActive').mockResolvedValueOnce([testProject]);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
     it('should return summary with all metrics', async () => {
       const summary = await backlogManager.getSummary();
 
@@ -186,6 +204,6 @@ describe('BacklogManager', () => {
       expect(typeof summary.totalPendingProposals).toBe('number');
       expect(typeof summary.isBacklogLow).toBe('boolean');
       expect(typeof summary.threshold).toBe('number');
-    }, 15000);
+    });
   });
 });
