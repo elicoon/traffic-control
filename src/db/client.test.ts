@@ -31,6 +31,37 @@ describe('Supabase Client', () => {
     expect(result.success).toBe(true);
   });
 
+  it('should return failure when query returns non-table-not-found error', async () => {
+    const client = createSupabaseClient();
+    const fromSpy = vi.spyOn(client, 'from').mockReturnValue({
+      select: () => ({
+        limit: () => Promise.resolve({
+          data: null,
+          error: { message: 'permission denied for table tc_projects' },
+        }),
+      }),
+    } as any);
+
+    const result = await testConnection();
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('permission denied');
+    fromSpy.mockRestore();
+  });
+
+  it('should return failure when connection throws an exception', async () => {
+    const client = createSupabaseClient();
+    const fromSpy = vi.spyOn(client, 'from').mockImplementation(() => {
+      throw new Error('network unreachable');
+    });
+
+    const result = await testConnection();
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('network unreachable');
+    fromSpy.mockRestore();
+  });
+
   it('should throw error when environment variables are missing', () => {
     // Store original values
     const originalUrl = process.env.SUPABASE_URL;
@@ -105,6 +136,45 @@ describe('Health Check', () => {
       expect(typeof result.error).toBe('string');
 
       // Restore env vars
+      process.env.SUPABASE_URL = originalUrl;
+      process.env.SUPABASE_SERVICE_KEY = originalKey;
+      resetClient();
+    });
+
+    it('should return healthy when DB reports table-not-found (schema not applied)', async () => {
+      const client = createSupabaseClient();
+      const fromSpy = vi.spyOn(client, 'from').mockReturnValue({
+        select: () => ({
+          limit: () => Promise.resolve({
+            data: null,
+            error: { message: 'relation "tc_projects" does not exist' },
+          }),
+        }),
+      } as any);
+
+      const result = await checkHealth();
+
+      expect(result.healthy).toBe(true);
+      expect(result.latencyMs).toBeGreaterThanOrEqual(0);
+      fromSpy.mockRestore();
+    });
+
+    it('should catch exceptions thrown by client creation and return unhealthy', async () => {
+      const originalUrl = process.env.SUPABASE_URL;
+      const originalKey = process.env.SUPABASE_SERVICE_KEY;
+
+      resetClient();
+      delete process.env.SUPABASE_URL;
+      delete process.env.SUPABASE_SERVICE_KEY;
+
+      const result = await checkHealth();
+
+      expect(result.healthy).toBe(false);
+      expect(result.latencyMs).toBeGreaterThanOrEqual(0);
+      expect(result.error).toBeDefined();
+      expect(typeof result.error).toBe('string');
+
+      // Restore
       process.env.SUPABASE_URL = originalUrl;
       process.env.SUPABASE_SERVICE_KEY = originalKey;
       resetClient();
@@ -231,6 +301,41 @@ describe('Health Check', () => {
       process.env.SUPABASE_URL = originalUrl;
       process.env.SUPABASE_SERVICE_KEY = originalKey;
       resetClient();
+    });
+
+    it('should log recovery when database becomes healthy after a failed attempt', async () => {
+      const client = createSupabaseClient();
+
+      let callCount = 0;
+      const fromSpy = vi.spyOn(client, 'from').mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            select: () => ({
+              limit: () => Promise.resolve({
+                data: null,
+                error: { message: 'temporary connection error' },
+              }),
+            }),
+          } as any;
+        }
+        return {
+          select: () => ({
+            limit: () => Promise.resolve({ data: [], error: null }),
+          }),
+        } as any;
+      });
+
+      const result = await waitForHealthy({
+        maxRetries: 2,
+        initialDelayMs: 10,
+        maxDelayMs: 50,
+        backoffMultiplier: 1,
+      });
+
+      expect(result.healthy).toBe(true);
+      expect(callCount).toBeGreaterThanOrEqual(2);
+      fromSpy.mockRestore();
     });
   });
 });

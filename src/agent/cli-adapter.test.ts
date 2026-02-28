@@ -527,6 +527,133 @@ describe('CLIAdapter', () => {
       expect(spawnArgs).toContain('Read');
       expect(spawnArgs).toContain('Write');
     });
+
+    it('should kill process when abort signal fires while running', async () => {
+      const adapter = new CLIAdapter();
+
+      const config: SDKAdapterConfig = {
+        cwd: '/test/path',
+        model: 'sonnet',
+      };
+
+      mockProcess.on.mockImplementation(() => mockProcess);
+
+      const activeQuery = await adapter.startQuery('session-abort', 'Test', config);
+
+      expect(activeQuery.isRunning).toBe(true);
+      activeQuery.abortController.abort();
+
+      expect(mockProcess.kill).toHaveBeenCalledWith('SIGTERM');
+      expect(activeQuery.isRunning).toBe(false);
+    });
+
+    it('should skip non-JSON lines in stdout', async () => {
+      const adapter = new CLIAdapter();
+
+      const config: SDKAdapterConfig = {
+        cwd: '/test/path',
+        model: 'sonnet',
+      };
+
+      let closeHandler: ((code: number) => void) | undefined;
+      mockProcess.on.mockImplementation((event: string, handler: (...args: unknown[]) => void) => {
+        if (event === 'close') closeHandler = handler as (code: number) => void;
+        return mockProcess;
+      });
+
+      const onMessage = vi.fn();
+      await adapter.startQuery('session-123', 'Test', config, onMessage);
+
+      // Emit a line that starts with '{' but is invalid JSON — exercises the catch block
+      mockProcess.stdout.emit('data', Buffer.from('{invalid json}\n'));
+
+      expect(onMessage).not.toHaveBeenCalled();
+
+      if (closeHandler) closeHandler(0);
+    });
+
+    it('should process remaining buffer contents on process close', async () => {
+      const adapter = new CLIAdapter();
+
+      const config: SDKAdapterConfig = {
+        cwd: '/test/path',
+        model: 'sonnet',
+      };
+
+      let closeHandler: ((code: number) => void) | undefined;
+      mockProcess.on.mockImplementation((event: string, handler: (...args: unknown[]) => void) => {
+        if (event === 'close') closeHandler = handler as (code: number) => void;
+        return mockProcess;
+      });
+
+      const onMessage = vi.fn();
+      await adapter.startQuery('session-123', 'Test', config, onMessage);
+
+      // Emit data without trailing newline — stays in buffer
+      const testMessage = { type: 'result', subtype: 'success', result: 'Done' };
+      mockProcess.stdout.emit('data', Buffer.from(JSON.stringify(testMessage)));
+
+      // Not processed yet (no newline)
+      expect(onMessage).not.toHaveBeenCalled();
+
+      // Close fires — remaining buffer should be processed
+      if (closeHandler) closeHandler(0);
+
+      expect(onMessage).toHaveBeenCalledWith(testMessage, 'session-123');
+    });
+
+    it('should resolve completionPromise even when process exits with non-zero code', async () => {
+      const adapter = new CLIAdapter();
+
+      const config: SDKAdapterConfig = {
+        cwd: '/test/path',
+        model: 'sonnet',
+      };
+
+      let closeHandler: ((code: number) => void) | undefined;
+      mockProcess.on.mockImplementation((event: string, handler: (...args: unknown[]) => void) => {
+        if (event === 'close') closeHandler = handler as (code: number) => void;
+        return mockProcess;
+      });
+
+      const activeQuery = await adapter.startQuery('session-nonzero', 'Test', config);
+      const completionPromise = (activeQuery as any).completionPromise as Promise<void>;
+
+      // Close with non-zero exit code — should still resolve (not reject)
+      if (closeHandler) closeHandler(1);
+
+      await expect(completionPromise).resolves.toBeUndefined();
+      expect(activeQuery.isRunning).toBe(false);
+    });
+
+    it('should not kill process when abort fires after process already stopped', async () => {
+      const adapter = new CLIAdapter();
+
+      const config: SDKAdapterConfig = {
+        cwd: '/test/path',
+        model: 'sonnet',
+      };
+
+      let closeHandler: ((code: number) => void) | undefined;
+      mockProcess.on.mockImplementation((event: string, handler: (...args: unknown[]) => void) => {
+        if (event === 'close') {
+          closeHandler = handler as (code: number) => void;
+        }
+        return mockProcess;
+      });
+
+      const activeQuery = await adapter.startQuery('session-abort2', 'Test', config);
+
+      // Stop the process via close event first
+      if (closeHandler) closeHandler(0);
+      expect(activeQuery.isRunning).toBe(false);
+
+      // Now abort — should be a no-op since isRunning is false
+      mockProcess.kill.mockClear();
+      activeQuery.abortController.abort();
+
+      expect(mockProcess.kill).not.toHaveBeenCalled();
+    });
   });
 
   describe('singleton management', () => {
@@ -563,6 +690,24 @@ describe('CLIAdapter', () => {
       const query = await mock.startQuery('session', 'prompt', { cwd: '/test', model: 'sonnet' });
 
       await expect(query.sendMessage('test')).rejects.toThrow();
+    });
+
+    it('should return fixed usage values from extractUsage', () => {
+      const mock = createBasicMockCLIAdapter();
+      const usage = mock.extractUsage({} as any);
+
+      expect(usage.inputTokens).toBe(100);
+      expect(usage.outputTokens).toBe(50);
+      expect(usage.totalTokens).toBe(150);
+      expect(usage.cacheReadInputTokens).toBe(0);
+      expect(usage.cacheCreationInputTokens).toBe(0);
+      expect(usage.costUSD).toBe(0);
+    });
+
+    it('should return null from mapToAgentEvent', () => {
+      const mock = createBasicMockCLIAdapter();
+      const event = mock.mapToAgentEvent({} as any, 'session-id');
+      expect(event).toBeNull();
     });
   });
 

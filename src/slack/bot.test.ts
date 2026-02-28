@@ -220,6 +220,11 @@ describe('Slack Bot', () => {
       expect(message).toContain('Add authentication');
     });
 
+    it('should return no-proposals message when approved array is empty', () => {
+      const message = formatProposalApproved([]);
+      expect(message).toBe('No proposals were approved.');
+    });
+
     it('should format rejection confirmation', () => {
       const message = formatProposalRejected(sampleProposal, 'Not a priority right now');
       expect(message).toContain('Rejected');
@@ -233,6 +238,12 @@ describe('Slack Bot', () => {
       expect(message).toContain('3');
       expect(message).toContain('5');
       expect(message).toContain('2');
+    });
+
+    it('should format backlog alert with no pending proposals (else branch)', () => {
+      const message = formatBacklogAlert(2, 5, 0);
+      expect(message).toContain('Backlog Running Low');
+      expect(message).toContain('Generating new proposals');
     });
   });
 
@@ -353,6 +364,45 @@ describe('Slack Bot', () => {
       expect(report).toContain('TrafficControl Status Report');
       expect(report).not.toContain('Recommendations');
       expect(report).not.toContain('Action Items');
+    });
+
+    it('should include warnings section when warning recommendations exist', () => {
+      const recommendationsWithWarnings: RecommendationData = {
+        projectRecommendations: new Map(),
+        systemRecommendations: [
+          {
+            type: 'high_utilization',
+            message: 'Opus utilization approaching limit',
+            priority: 'warning' as const
+          }
+        ],
+        actionItems: []
+      };
+      const report = formatStatusReport(sampleMetrics, recommendationsWithWarnings);
+      expect(report).toContain('_Warnings:_');
+      expect(report).toContain('[~] Opus utilization approaching limit');
+    });
+
+    it('should show overflow message when more than 5 action items exist', () => {
+      const manyActionItems: RecommendationData = {
+        projectRecommendations: new Map(),
+        systemRecommendations: [],
+        actionItems: [
+          'Action item 1',
+          'Action item 2',
+          'Action item 3',
+          'Action item 4',
+          'Action item 5',
+          'Action item 6',
+          'Action item 7'
+        ]
+      };
+      const report = formatStatusReport(sampleMetrics, manyActionItems);
+      expect(report).toContain('Action Items');
+      expect(report).toContain('1. Action item 1');
+      expect(report).toContain('5. Action item 5');
+      expect(report).not.toContain('6. Action item 6');
+      expect(report).toContain('_...and 2 more_');
     });
   });
 

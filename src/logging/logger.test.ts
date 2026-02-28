@@ -290,3 +290,46 @@ describe('Correlation', () => {
     expect(getCorrelationId()).toBe('outer');
   });
 });
+
+describe('logger.init and addRedactFields', () => {
+  afterEach(() => {
+    logger.reset();
+    vi.unstubAllEnvs();
+  });
+
+  it('should init log level from TC_LOG_LEVEL env var', () => {
+    vi.stubEnv('TC_LOG_LEVEL', 'DEBUG');
+    logger.init();
+    expect(logger.getLevel()).toBe(LogLevel.DEBUG);
+  });
+
+  it('should init format from TC_LOG_FORMAT env var (json)', () => {
+    vi.stubEnv('TC_LOG_FORMAT', 'json');
+    logger.init();
+    expect(logger.getFormat()).toBe('json');
+  });
+
+  it('should init format from TC_LOG_FORMAT env var (pretty)', () => {
+    vi.stubEnv('TC_LOG_FORMAT', 'pretty');
+    logger.init();
+    expect(logger.getFormat()).toBe('pretty');
+  });
+
+  it('should init redact fields from TC_LOG_REDACT env var without throwing', () => {
+    vi.stubEnv('TC_LOG_REDACT', 'mySecret,apiToken');
+    // Covers lines 301-303: split and assign redactFields from env var
+    expect(() => logger.init()).not.toThrow();
+  });
+
+  it('should not change level when TC_LOG_LEVEL is not set', () => {
+    delete process.env.TC_LOG_LEVEL;
+    const levelBefore = logger.getLevel();
+    logger.init();
+    expect(logger.getLevel()).toBe(levelBefore);
+  });
+
+  it('should add custom redact fields via addRedactFields without throwing', () => {
+    // Covers line 332: state.redactFields.push(...fields)
+    expect(() => logger.addRedactFields(['customField1', 'customField2'])).not.toThrow();
+  });
+});

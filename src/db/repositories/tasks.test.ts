@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { TaskRepository } from './tasks.js';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { TaskRepository, type Task } from './tasks.js';
 import { ProjectRepository } from './projects.js';
 import { createSupabaseClient } from '../client.js';
 import { TEST_PREFIX, deleteTasksByIds } from '../test-cleanup.js';
+import { SupabaseClient } from '@supabase/supabase-js';
 
 describe('TaskRepository', () => {
   let taskRepo: TaskRepository;
@@ -100,5 +101,101 @@ describe('TaskRepository', () => {
     });
     expect(updated.actual_tokens_opus).toBe(1000);
     expect(updated.actual_sessions_opus).toBe(1);
+  });
+});
+
+describe('TaskRepository unit tests', () => {
+  function createChain(result: { data: unknown; error: { message: string } | null }): any {
+    const obj: any = {
+      select: () => createChain(result),
+      insert: () => createChain(result),
+      delete: () => createChain(result),
+      update: () => createChain(result),
+      eq: () => createChain(result),
+      order: () => createChain(result),
+      single: () => Promise.resolve(result),
+      then: (resolve: (v: unknown) => void, reject: (v: unknown) => void) =>
+        Promise.resolve(result).then(resolve, reject),
+    };
+    return obj;
+  }
+
+  function createErrorClient(errorMessage: string) {
+    const result = { data: null, error: { message: errorMessage } };
+    return { from: () => createChain(result) } as unknown as SupabaseClient;
+  }
+
+  function createSuccessClient(data: unknown) {
+    const result = { data, error: null };
+    return { from: () => createChain(result) } as unknown as SupabaseClient;
+  }
+
+  describe('getEtaDelta', () => {
+    const baseTask = {
+      id: 't1', project_id: 'p1', title: 'Task', description: null,
+      status: 'complete' as const, priority: 0, complexity_estimate: null,
+      estimated_sessions_opus: 0, estimated_sessions_sonnet: 0,
+      actual_tokens_opus: 0, actual_tokens_sonnet: 0,
+      actual_sessions_opus: 0, actual_sessions_sonnet: 0,
+      assigned_agent_id: null, requires_visual_review: false,
+      parent_task_id: null, tags: [], acceptance_criteria: null,
+      source: 'user' as const, blocked_by_task_id: null,
+      priority_confirmed: true, priority_confirmed_at: null, priority_confirmed_by: null,
+      started_at: null, created_at: '2024-01-01T00:00:00Z', updated_at: '2024-01-01T00:00:00Z',
+    };
+
+    it('should return null when eta is missing (line 552)', () => {
+      const repo = new TaskRepository(createSuccessClient(null));
+      const task: Task = { ...baseTask, eta: null, completed_at: '2024-01-02T00:00:00Z' };
+      expect(repo.getEtaDelta(task)).toBeNull();
+    });
+
+    it('should return null when completed_at is missing (line 552)', () => {
+      const repo = new TaskRepository(createSuccessClient(null));
+      const task: Task = { ...baseTask, eta: '2024-01-02T00:00:00Z', completed_at: null };
+      expect(repo.getEtaDelta(task)).toBeNull();
+    });
+
+    it('should return positive delta when task completed late (lines 553-554)', () => {
+      const repo = new TaskRepository(createSuccessClient(null));
+      const task: Task = {
+        ...baseTask,
+        eta: '2024-01-02T00:00:00Z',
+        completed_at: '2024-01-03T00:00:00Z',
+      };
+      expect(repo.getEtaDelta(task)).toBe(86400000); // 1 day in ms
+    });
+
+    it('should return negative delta when task completed early (lines 553-554)', () => {
+      const repo = new TaskRepository(createSuccessClient(null));
+      const task: Task = {
+        ...baseTask,
+        eta: '2024-01-03T00:00:00Z',
+        completed_at: '2024-01-02T00:00:00Z',
+      };
+      expect(repo.getEtaDelta(task)).toBe(-86400000); // -1 day in ms
+    });
+  });
+
+  describe('error paths', () => {
+    it('should throw when confirmPriority returns an error (lines 518-519)', async () => {
+      const repo = new TaskRepository(createErrorClient('confirm failed'));
+      await expect(repo.confirmPriority('task-1', 'user')).rejects.toThrow(
+        'Failed to confirm priority: confirm failed'
+      );
+    });
+
+    it('should throw when getUnconfirmedPriorityTasks returns an error (lines 539-541)', async () => {
+      const repo = new TaskRepository(createErrorClient('query failed'));
+      await expect(repo.getUnconfirmedPriorityTasks()).rejects.toThrow(
+        'Failed to get unconfirmed priority tasks: query failed'
+      );
+    });
+
+    it('should return tasks from getUnconfirmedPriorityTasks on success (lines 529-544)', async () => {
+      const repo = new TaskRepository(createSuccessClient([]));
+      const tasks = await repo.getUnconfirmedPriorityTasks();
+      expect(tasks).toEqual([]);
+    });
   });
 });
