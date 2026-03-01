@@ -602,6 +602,91 @@ describe('RecommendationEngine', () => {
     });
   });
 
+  describe('RecommendationEngine - Custom Thresholds', () => {
+    it('should suppress recommendations that fall below custom thresholds', () => {
+      const customEngine = new RecommendationEngine({
+        blockedTasks: 5,
+        highVelocity: 10,
+        lowOpusUtilization: 50,
+        highBlockedSystem: 10
+      });
+
+      const metrics: ProjectMetrics = {
+        projectId: 'proj-1',
+        projectName: 'Test Project',
+        tasksQueued: 2,
+        tasksInProgress: 1,
+        tasksBlocked: 3, // Below custom threshold of 5
+        tasksCompletedToday: 7, // Below custom threshold of 10
+        tasksCompletedThisWeek: 7,
+        tokensOpus: 1000,
+        tokensSonnet: 500,
+        sessionsCount: 2,
+        completionRate: 25
+      };
+
+      const recommendations = customEngine.analyzeProjectMetrics(metrics);
+
+      // Should NOT trigger blocked_tasks warning (3 < 5)
+      expect(recommendations.some(r => r.type === 'blocked_tasks')).toBe(false);
+      // Should NOT trigger high_velocity positive (7 < 10)
+      expect(recommendations.some(r => r.type === 'high_velocity')).toBe(false);
+    });
+
+    it('should use default thresholds when none provided', () => {
+      const defaultEngine = new RecommendationEngine();
+
+      const metrics: ProjectMetrics = {
+        projectId: 'proj-1',
+        projectName: 'Test Project',
+        tasksQueued: 2,
+        tasksInProgress: 1,
+        tasksBlocked: 1, // Exactly at default threshold of 1
+        tasksCompletedToday: 5, // Exactly at default threshold of 5
+        tasksCompletedThisWeek: 5,
+        tokensOpus: 1000,
+        tokensSonnet: 500,
+        sessionsCount: 2,
+        completionRate: 25
+      };
+
+      const recommendations = defaultEngine.analyzeProjectMetrics(metrics);
+
+      // Should trigger with default threshold of 1
+      expect(recommendations.some(r => r.type === 'blocked_tasks')).toBe(true);
+      // Should trigger with default threshold of 5
+      expect(recommendations.some(r => r.type === 'high_velocity')).toBe(true);
+    });
+
+    it('should use custom system-level thresholds', () => {
+      const customEngine = new RecommendationEngine({
+        lowOpusUtilization: 50,
+        highBlockedSystem: 10
+      });
+
+      const systemMetrics: SystemMetrics = {
+        totalProjects: 2,
+        totalTasksQueued: 10,
+        totalTasksInProgress: 2,
+        totalTasksBlocked: 8, // Below custom threshold of 10
+        totalTasksCompletedToday: 3,
+        totalTasksCompletedThisWeek: 15,
+        totalTokensOpus: 5000,
+        totalTokensSonnet: 10000,
+        totalSessions: 10,
+        opusUtilization: 55, // Above custom threshold of 50, so NOT low
+        sonnetUtilization: 60
+      };
+
+      const recommendations = customEngine.analyzeSystemMetrics(systemMetrics);
+
+      // Should NOT trigger: 55 >= 50, so not below lowOpusUtilization threshold
+      expect(recommendations.some(r => r.type === 'low_opus_utilization')).toBe(false);
+      // Should NOT trigger (8 < 10)
+      expect(recommendations.some(r => r.type === 'high_blocked_count')).toBe(false);
+    });
+  });
+
   describe('edge cases', () => {
     it('should handle all-zero project metrics without errors', () => {
       const metrics: ProjectMetrics = {
