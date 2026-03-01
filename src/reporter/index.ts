@@ -13,7 +13,8 @@ export {
   type Recommendation,
   type RecommendationType,
   type RecommendationPriority,
-  type RecommendationReport
+  type RecommendationReport,
+  type RecommendationThresholds
 } from './recommendation-engine.js';
 
 export {
