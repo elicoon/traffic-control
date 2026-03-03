@@ -28,3 +28,6 @@ jobs:
 
       - name: Test
         run: npm run test
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
